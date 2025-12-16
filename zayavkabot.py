@@ -465,21 +465,21 @@ class ApplicationForm(discord.ui.Modal, title='Подача заявки в се
     
     nickname_static = discord.ui.TextInput(
         label='Никнейм и Статик',
-        placeholder='Например: Thug Boiler 216886',
+        placeholder='Например: Skeet Nyam 2253',
         max_length=100,
         required=True
     )
     
     ooc_info = discord.ui.TextInput(
         label='OOC имя и возраст',
-        placeholder='Например: Ярик 21',
+        placeholder='Например: Серега 20',
         max_length=100,
         required=True
     )
     
     fam_history = discord.ui.TextInput(
         label='История семей',
-        placeholder='Например: Hools, Saint',
+        placeholder='Например: Gucci ушел в инактив',
         style=discord.TextStyle.paragraph,
         max_length=1000,
         required=True
@@ -487,7 +487,7 @@ class ApplicationForm(discord.ui.Modal, title='Подача заявки в се
     
     reason = discord.ui.TextInput(
         label='Почему выбрали именно нас?',
-        placeholder='Например: с 12 знаю фаму',
+        placeholder='Например: с маркета увидел, видел вас на контенте',
         style=discord.TextStyle.paragraph,
         max_length=1000,
         required=True
@@ -495,7 +495,7 @@ class ApplicationForm(discord.ui.Modal, title='Подача заявки в се
     
     rollbacks = discord.ui.TextInput(
         label='Откаты с ГГ (ссылки)',
-        placeholder='Например: https://youtu.be/tCXJqL3TBVI спешик',
+        placeholder='Например: https://youtu.be/ спешик',
         style=discord.TextStyle.paragraph,
         max_length=2000,
         required=False
