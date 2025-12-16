@@ -6,12 +6,19 @@ import re
 from datetime import datetime
 import traceback
 import sys
+import asyncpg
+import asyncio
 
-# Получаем токен из переменных окружения Railway
+# Получаем данные из переменных окружения Railway
 TOKEN = os.environ.get('DISCORD_TOKEN')
 if not TOKEN:
     print("❌ ОШИБКА: Переменная окружения DISCORD_TOKEN не установлена!")
-    print("Установите DISCORD_TOKEN в настройках Railway")
+    sys.exit(1)
+
+# Данные для PostgreSQL (Railway предоставляет DATABASE_URL)
+DATABASE_URL = os.environ.get('DATABASE_URL')
+if not DATABASE_URL:
+    print("❌ ОШИБКА: Переменная окружения DATABASE_URL не установлена!")
     sys.exit(1)
 
 intents = discord.Intents.default()
@@ -21,12 +28,6 @@ intents.guilds = True
 intents.members = True
 
 bot = commands.Bot(command_prefix='!', intents=intents)
-
-# Файл для хранения заявок
-APPLICATIONS_FILE = 'applications.json'
-if 'RAILWAY_ENVIRONMENT' in os.environ:
-    # На Railway сохраняем в /tmp
-    APPLICATIONS_FILE = '/tmp/applications.json'
 
 # ID каналов для основного сервера
 LOGS_CHANNEL_ID = 1317565432210915379  # Канал для логов
@@ -45,9 +46,14 @@ TAG_ROLE_IDS = [
 IMAGE_URL = "https://media.discordapp.net/attachments/1189879069991510066/1449528629775302698/zastavki-gas-kvas-com-n1e0-p-zastavki-na-telefon-am-nyam-2.png?ex=694285fc&is=6941347c&hm=560b40c38fbc83ae9821b60df73fadefb0d917eb0082f53635350b686b33b605&=&format=webp&quality=lossless"
 SMALL_ICON_URL = "https://cdn.discordapp.com/attachments/1381981605848944720/1449946500057792543/4.png?ex=6940bf68&is=693f6de8&hm=df622f91cff0f82216929fb398fbc04aea2ab256c4323a18840538c0bbdabb08&"
 
+# Глобальный пул подключений к БД
+db_pool = None
+
 class Application:
     def __init__(self, username_static, ooc_info, fam_history, reason, rollbacks, discord_user, discord_id, 
-                 message_id=None, status="pending", channel_id=None, moderator=None, reason_reject=None):
+                 message_id=None, status="pending", channel_id=None, moderator=None, reason_reject=None,
+                 created_at=None, updated_at=None, id=None):
+        self.id = id
         self.username_static = username_static
         self.ooc_info = ooc_info
         self.fam_history = fam_history
@@ -60,11 +66,12 @@ class Application:
         self.channel_id = channel_id
         self.moderator = moderator
         self.reason_reject = reason_reject
-        self.created_at = datetime.now()
-        self.updated_at = datetime.now()
+        self.created_at = created_at or datetime.now()
+        self.updated_at = updated_at or datetime.now()
 
     def to_dict(self):
         return {
+            "id": self.id,
             "username_static": self.username_static,
             "ooc_info": self.ooc_info,
             "fam_history": self.fam_history,
@@ -77,82 +84,271 @@ class Application:
             "channel_id": self.channel_id,
             "moderator": self.moderator,
             "reason_reject": self.reason_reject,
-            "created_at": self.created_at.isoformat(),
-            "updated_at": self.updated_at.isoformat()
+            "created_at": self.created_at.isoformat() if isinstance(self.created_at, datetime) else self.created_at,
+            "updated_at": self.updated_at.isoformat() if isinstance(self.updated_at, datetime) else self.updated_at
         }
 
     @classmethod
     def from_dict(cls, data):
         app = cls(
-            data["username_static"],
-            data["ooc_info"],
-            data["fam_history"],
-            data["reason"],
-            data["rollbacks"],
-            data["discord_user"],
-            data["discord_id"],
-            data.get("message_id"),
-            data.get("status", "pending"),
-            data.get("channel_id"),
-            data.get("moderator"),
-            data.get("reason_reject")
+            id=data.get("id"),
+            username_static=data["username_static"],
+            ooc_info=data["ooc_info"],
+            fam_history=data["fam_history"],
+            reason=data["reason"],
+            rollbacks=data["rollbacks"],
+            discord_user=data["discord_user"],
+            discord_id=data["discord_id"],
+            message_id=data.get("message_id"),
+            status=data.get("status", "pending"),
+            channel_id=data.get("channel_id"),
+            moderator=data.get("moderator"),
+            reason_reject=data.get("reason_reject"),
+            created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.now(),
+            updated_at=datetime.fromisoformat(data["updated_at"]) if data.get("updated_at") else datetime.now()
         )
-        app.created_at = datetime.fromisoformat(data.get("created_at", datetime.now().isoformat()))
-        app.updated_at = datetime.fromisoformat(data.get("updated_at", datetime.now().isoformat()))
         return app
 
-def save_applications(applications):
+async def init_database():
+    """Инициализация базы данных"""
+    global db_pool
     try:
-        with open(APPLICATIONS_FILE, 'w', encoding='utf-8') as f:
-            data = [app.to_dict() for app in applications]
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        # Создаем пул подключений
+        db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=10)
+        print("✅ Подключение к PostgreSQL установлено")
+        
+        # Создаем таблицу, если она не существует
+        async with db_pool.acquire() as conn:
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS applications (
+                    id SERIAL PRIMARY KEY,
+                    username_static TEXT NOT NULL,
+                    ooc_info TEXT NOT NULL,
+                    fam_history TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    rollbacks TEXT,
+                    discord_user TEXT NOT NULL,
+                    discord_id TEXT NOT NULL,
+                    message_id TEXT,
+                    status TEXT DEFAULT 'pending',
+                    channel_id TEXT,
+                    moderator TEXT,
+                    reason_reject TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            # Создаем индекс для быстрого поиска по discord_id
+            await conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_discord_id ON applications(discord_id)
+            ''')
+            
+            # Создаем индекс для поиска по статусу
+            await conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_status ON applications(status)
+            ''')
+            
+            print("✅ Таблица applications готова")
+            
     except Exception as e:
-        print(f"Ошибка сохранения заявок: {e}")
+        print(f"❌ Ошибка при инициализации базы данных: {e}")
+        traceback.print_exc()
+        raise
 
-def load_applications():
+async def save_application(application):
+    """Сохраняет заявку в базу данных"""
     try:
-        with open(APPLICATIONS_FILE, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            apps = []
-            for item in data:
-                try:
-                    # Пытаемся загрузить с новым именем поля
-                    app = Application.from_dict(item)
-                    apps.append(app)
-                except KeyError as e:
-                    # Если не получилось, преобразуем старое имя в новое
-                    if "username_static" not in item and "username static" in item:
-                        # Конвертируем старый формат в новый
-                        item["username_static"] = item.pop("username static")
-                        item["ooc_info"] = item.get("ooc_info") or f"{item.get('ooc_name', '')} {item.get('age', '')}".strip()
-                        
-                        # Удаляем старые поля, если они есть
-                        if "username" in item:
-                            del item["username"]
-                        if "static" in item:
-                            del item["static"]
-                        if "ooc_name" in item:
-                            del item["ooc_name"]
-                        if "age" in item:
-                            del item["age"]
-                        if "server_id" in item:
-                            del item["server_id"]
-                        
-                        app = Application.from_dict(item)
-                        apps.append(app)
-                    else:
-                        print(f"Ошибка загрузки записи: {e}, данные: {item}")
-            return apps
-    except FileNotFoundError:
-        return []
-    except json.JSONDecodeError:
-        print("Ошибка чтения файла заявок. Создаю новый.")
-        return []
+        async with db_pool.acquire() as conn:
+            if application.id:
+                # Обновляем существующую запись
+                await conn.execute('''
+                    UPDATE applications SET
+                        username_static = $1,
+                        ooc_info = $2,
+                        fam_history = $3,
+                        reason = $4,
+                        rollbacks = $5,
+                        discord_user = $6,
+                        discord_id = $7,
+                        message_id = $8,
+                        status = $9,
+                        channel_id = $10,
+                        moderator = $11,
+                        reason_reject = $12,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = $13
+                ''', 
+                application.username_static, application.ooc_info, application.fam_history,
+                application.reason, application.rollbacks, application.discord_user,
+                application.discord_id, application.message_id, application.status,
+                application.channel_id, application.moderator, application.reason_reject,
+                application.id)
+            else:
+                # Вставляем новую запись
+                record = await conn.fetchrow('''
+                    INSERT INTO applications 
+                    (username_static, ooc_info, fam_history, reason, rollbacks, discord_user, 
+                     discord_id, message_id, status, channel_id, moderator, reason_reject)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                    RETURNING id, created_at, updated_at
+                ''',
+                application.username_static, application.ooc_info, application.fam_history,
+                application.reason, application.rollbacks, application.discord_user,
+                application.discord_id, application.message_id, application.status,
+                application.channel_id, application.moderator, application.reason_reject)
+                
+                if record:
+                    application.id = record['id']
+                    application.created_at = record['created_at']
+                    application.updated_at = record['updated_at']
+                    
+        print(f"✅ Заявка сохранена в БД (ID: {application.id})")
+        return True
     except Exception as e:
-        print(f"Неизвестная ошибка при загрузке заявок: {e}")
+        print(f"❌ Ошибка сохранения заявки: {e}")
+        traceback.print_exc()
+        return False
+
+async def load_applications():
+    """Загружает все заявки из базы данных"""
+    try:
+        applications_list = []
+        async with db_pool.acquire() as conn:
+            records = await conn.fetch('''
+                SELECT * FROM applications ORDER BY created_at DESC
+            ''')
+            
+            for record in records:
+                app = Application(
+                    id=record['id'],
+                    username_static=record['username_static'],
+                    ooc_info=record['ooc_info'],
+                    fam_history=record['fam_history'],
+                    reason=record['reason'],
+                    rollbacks=record['rollbacks'],
+                    discord_user=record['discord_user'],
+                    discord_id=record['discord_id'],
+                    message_id=record['message_id'],
+                    status=record['status'],
+                    channel_id=record['channel_id'],
+                    moderator=record['moderator'],
+                    reason_reject=record['reason_reject'],
+                    created_at=record['created_at'],
+                    updated_at=record['updated_at']
+                )
+                applications_list.append(app)
+        
+        print(f"✅ Загружено {len(applications_list)} заявок из БД")
+        return applications_list
+    except Exception as e:
+        print(f"❌ Ошибка загрузки заявок: {e}")
+        traceback.print_exc()
         return []
 
-applications = load_applications()
+async def get_user_applications(discord_id):
+    """Получает заявки пользователя по discord_id"""
+    try:
+        applications_list = []
+        async with db_pool.acquire() as conn:
+            records = await conn.fetch('''
+                SELECT * FROM applications 
+                WHERE discord_id = $1 
+                ORDER BY created_at DESC
+            ''', discord_id)
+            
+            for record in records:
+                app = Application(
+                    id=record['id'],
+                    username_static=record['username_static'],
+                    ooc_info=record['ooc_info'],
+                    fam_history=record['fam_history'],
+                    reason=record['reason'],
+                    rollbacks=record['rollbacks'],
+                    discord_user=record['discord_user'],
+                    discord_id=record['discord_id'],
+                    message_id=record['message_id'],
+                    status=record['status'],
+                    channel_id=record['channel_id'],
+                    moderator=record['moderator'],
+                    reason_reject=record['reason_reject'],
+                    created_at=record['created_at'],
+                    updated_at=record['updated_at']
+                )
+                applications_list.append(app)
+        
+        return applications_list
+    except Exception as e:
+        print(f"❌ Ошибка получения заявок пользователя: {e}")
+        return []
+
+async def get_pending_applications():
+    """Получает все заявки со статусом pending"""
+    try:
+        applications_list = []
+        async with db_pool.acquire() as conn:
+            records = await conn.fetch('''
+                SELECT * FROM applications 
+                WHERE status = 'pending'
+                ORDER BY created_at DESC
+            ''')
+            
+            for record in records:
+                app = Application(
+                    id=record['id'],
+                    username_static=record['username_static'],
+                    ooc_info=record['ooc_info'],
+                    fam_history=record['fam_history'],
+                    reason=record['reason'],
+                    rollbacks=record['rollbacks'],
+                    discord_user=record['discord_user'],
+                    discord_id=record['discord_id'],
+                    message_id=record['message_id'],
+                    status=record['status'],
+                    channel_id=record['channel_id'],
+                    moderator=record['moderator'],
+                    reason_reject=record['reason_reject'],
+                    created_at=record['created_at'],
+                    updated_at=record['updated_at']
+                )
+                applications_list.append(app)
+        
+        return applications_list
+    except Exception as e:
+        print(f"❌ Ошибка получения pending заявок: {e}")
+        return []
+
+async def get_application_by_id(app_id):
+    """Получает заявку по ID"""
+    try:
+        async with db_pool.acquire() as conn:
+            record = await conn.fetchrow('''
+                SELECT * FROM applications WHERE id = $1
+            ''', app_id)
+            
+            if record:
+                app = Application(
+                    id=record['id'],
+                    username_static=record['username_static'],
+                    ooc_info=record['ooc_info'],
+                    fam_history=record['fam_history'],
+                    reason=record['reason'],
+                    rollbacks=record['rollbacks'],
+                    discord_user=record['discord_user'],
+                    discord_id=record['discord_id'],
+                    message_id=record['message_id'],
+                    status=record['status'],
+                    channel_id=record['channel_id'],
+                    moderator=record['moderator'],
+                    reason_reject=record['reason_reject'],
+                    created_at=record['created_at'],
+                    updated_at=record['updated_at']
+                )
+                return app
+        return None
+    except Exception as e:
+        print(f"❌ Ошибка получения заявки по ID: {e}")
+        return None
 
 def has_admin_permission(user):
     """Проверяет, есть ли у пользователя одна из админских ролей"""
@@ -214,8 +410,6 @@ async def create_application_channel(guild, discord_user, discord_id, applicatio
 
 async def delete_application_channel(channel, delay_seconds=5):
     """Удаляет канал заявки с задержкой (теперь 5 секунд вместо 300)"""
-    import asyncio
-    
     await asyncio.sleep(delay_seconds)
     try:
         await channel.delete(reason="Заявка обработана")
@@ -257,9 +451,8 @@ async def send_application_embed(channel, application, interaction_user, guild):
         embed.add_field(name="ID", value=f"```{application.discord_id}```", inline=True)
         
         # Проверяем предыдущие заявки пользователя
-        user_previous_apps = [app for app in applications 
-                             if app.discord_id == application.discord_id 
-                             and app.status != "pending"]
+        user_previous_apps = await get_user_applications(application.discord_id)
+        user_previous_apps = [app for app in user_previous_apps if app.status != "pending" and app.id != application.id]
         
         if user_previous_apps:
             logs_channel = bot.get_channel(LOGS_CHANNEL_ID)
@@ -325,7 +518,7 @@ async def send_application_embed(channel, application, interaction_user, guild):
             application.status = "approved"
             application.moderator = interaction_btn.user.name
             application.updated_at = datetime.now()
-            save_applications(applications)
+            await save_application(application)
             
             try:
                 user = await bot.fetch_user(int(application.discord_id))
@@ -366,7 +559,7 @@ async def send_application_embed(channel, application, interaction_user, guild):
                 application.moderator = interaction_btn.user.name
                 application.reason_reject = reason_input.value
                 application.updated_at = datetime.now()
-                save_applications(applications)
+                await save_application(application)
                 
                 try:
                     user = await bot.fetch_user(int(application.discord_id))
@@ -418,6 +611,10 @@ async def send_application_embed(channel, application, interaction_user, guild):
         # Отправляем кнопки
         buttons_message = await channel.send(view=view)
         
+        # Сохраняем ID сообщения
+        application.message_id = message.id
+        await save_application(application)
+        
         return message, buttons_message
     except Exception as e:
         print(f"Ошибка отправки embed: {e}")
@@ -465,21 +662,21 @@ class ApplicationForm(discord.ui.Modal, title='Подача заявки в се
     
     nickname_static = discord.ui.TextInput(
         label='Никнейм и Статик',
-        placeholder='Например: Skeet Nyam 2253',
+        placeholder='Например: Thug Boiler 216886',
         max_length=100,
         required=True
     )
     
     ooc_info = discord.ui.TextInput(
         label='OOC имя и возраст',
-        placeholder='Например: Серега 20',
+        placeholder='Например: Ярик 21',
         max_length=100,
         required=True
     )
     
     fam_history = discord.ui.TextInput(
         label='История семей',
-        placeholder='Например: Gucci ушел в инактив',
+        placeholder='Например: Hools, Saint',
         style=discord.TextStyle.paragraph,
         max_length=1000,
         required=True
@@ -487,7 +684,7 @@ class ApplicationForm(discord.ui.Modal, title='Подача заявки в се
     
     reason = discord.ui.TextInput(
         label='Почему выбрали именно нас?',
-        placeholder='Например: с маркета увидел, видел вас на контенте',
+        placeholder='Например: с 12 знаю фаму',
         style=discord.TextStyle.paragraph,
         max_length=1000,
         required=True
@@ -495,7 +692,7 @@ class ApplicationForm(discord.ui.Modal, title='Подача заявки в се
     
     rollbacks = discord.ui.TextInput(
         label='Откаты с ГГ (ссылки)',
-        placeholder='Например: https://youtu.be/ спешик',
+        placeholder='Например: https://youtu.be/tCXJqL3TBVI спешик',
         style=discord.TextStyle.paragraph,
         max_length=2000,
         required=False
@@ -504,9 +701,8 @@ class ApplicationForm(discord.ui.Modal, title='Подача заявки в се
     async def on_submit(self, interaction: discord.Interaction):
         try:
             # Проверяем, есть ли у пользователя активная заявка
-            user_active_apps = [app for app in applications 
-                               if app.discord_id == str(interaction.user.id) 
-                               and app.status == "pending"]
+            user_active_apps = await get_user_applications(str(interaction.user.id))
+            user_active_apps = [app for app in user_active_apps if app.status == "pending"]
             
             if user_active_apps:
                 await interaction.response.send_message(
@@ -529,15 +725,10 @@ class ApplicationForm(discord.ui.Modal, title='Подача заявки в се
                 discord_id=str(interaction.user.id)
             )
             
-            applications.append(application)
-            
             channel = await create_application_channel(interaction.guild, interaction.user.name, interaction.user.id, application)
             application.channel_id = channel.id
             
             message, buttons_message = await send_application_embed(channel, application, interaction.user, interaction.guild)
-            application.message_id = message.id
-            
-            save_applications(applications)
             
             # Используем followup для отправки ответа
             await interaction.followup.send(
@@ -576,6 +767,9 @@ class ApplicationForm(discord.ui.Modal, title='Подача заявки в се
 async def on_ready():
     print(f'✅ {bot.user} запущен!')
     print(f'ID бота: {bot.user.id}')
+    
+    # Инициализируем базу данных
+    await init_database()
     
     # Выводим информацию о серверах
     for guild in bot.guilds:
@@ -645,9 +839,11 @@ async def create_application_panel(ctx):
 async def applications_list(ctx):
     """Показать все заявки"""
     try:
-        if len(applications) == 0:
-            await ctx.send("Заявок нет.")
-            return
+        pending_apps = await get_pending_applications()
+        all_apps = await load_applications()
+        
+        approved_apps = [app for app in all_apps if app.status == "approved"]
+        rejected_apps = [app for app in all_apps if app.status == "rejected"]
         
         embed = discord.Embed(
             title="📋 Активные заявки",
@@ -655,17 +851,13 @@ async def applications_list(ctx):
             timestamp=datetime.now()
         )
         
-        pending_apps = [app for app in applications if app.status == "pending"]
-        approved_apps = [app for app in applications if app.status == "approved"]
-        rejected_apps = [app for app in applications if app.status == "rejected"]
-        
         embed.add_field(name="⏳ На рассмотрении", value=str(len(pending_apps)), inline=True)
         embed.add_field(name="✅ Принято", value=str(len(approved_apps)), inline=True)
         embed.add_field(name="❌ Отклонено", value=str(len(rejected_apps)), inline=True)
         
         if pending_apps:
             apps_text = ""
-            for app in pending_apps[-5:]:
+            for app in pending_apps[:5]:  # Берем первые 5
                 channel_info = f"<#{app.channel_id}>" if app.channel_id else "Канал не создан"
                 apps_text += f"• **{app.username_static}** - {channel_info}\n"
             embed.add_field(name="Последние заявки:", value=apps_text, inline=False)
@@ -673,6 +865,7 @@ async def applications_list(ctx):
         await ctx.send(embed=embed)
     except Exception as e:
         print(f"Ошибка команды заявки: {e}")
+        traceback.print_exc()
         await ctx.send("❌ Произошла ошибка при получении списка заявок.")
 
 @bot.command(name="очистка")
@@ -705,6 +898,7 @@ async def cleanup_channels(ctx):
         await ctx.send(f"✅ Удалено {deleted} старых каналов с заявками.")
     except Exception as e:
         print(f"Ошибка команды очистка: {e}")
+        traceback.print_exc()
         await ctx.send("❌ Произошла ошибка при очистке каналов.")
 
 @bot.command(name="статус")
@@ -714,7 +908,7 @@ async def application_status(ctx, discord_id: str = None):
         if discord_id is None:
             discord_id = str(ctx.author.id)
         
-        user_apps = [app for app in applications if app.discord_id == discord_id]
+        user_apps = await get_user_applications(discord_id)
         
         if not user_apps:
             await ctx.send("Заявок не найдено.")
@@ -726,7 +920,7 @@ async def application_status(ctx, discord_id: str = None):
             timestamp=datetime.now()
         )
         
-        for i, app in enumerate(user_apps[-3:], 1):
+        for i, app in enumerate(user_apps[:3], 1):  # Берем первые 3
             status_emoji = "⏳" if app.status == "pending" else "✅" if app.status == "approved" else "❌"
             status_text = "На рассмотрении" if app.status == "pending" else "Принята" if app.status == "approved" else "Отклонена"
             
@@ -749,6 +943,7 @@ async def application_status(ctx, discord_id: str = None):
         await ctx.send(embed=embed)
     except Exception as e:
         print(f"Ошибка команды статус: {e}")
+        traceback.print_exc()
         await ctx.send("❌ Произошла ошибка при проверке статуса.")
 
 @bot.command(name="удалить_канал")
@@ -780,6 +975,7 @@ async def delete_channel_manual(ctx, channel_id: str = None):
         await ctx.send(f"✅ Канал {channel.name} удален.")
     except Exception as e:
         print(f"Ошибка команды удалить_канал: {e}")
+        traceback.print_exc()
         await ctx.send(f"❌ Ошибка при удалении канала: {str(e)}")
 
 @bot.command(name="тест")
@@ -796,6 +992,7 @@ async def on_command_error(ctx, error):
         await ctx.send("❌ У вас недостаточно прав для выполнения этой команды.")
     else:
         print(f"Ошибка команды {ctx.command}: {error}")
+        traceback.print_exc()
         await ctx.send("❌ Произошла ошибка при выполнении команды.")
 
 # Добавляем хендлер для перезапуска при ошибках
@@ -808,6 +1005,7 @@ if __name__ == "__main__":
     print("=" * 50)
     print("Запуск Discord бота для системы заявок")
     print(f"Токен получен: {'Да' if TOKEN else 'Нет'}")
+    print(f"Database URL получен: {'Да' if DATABASE_URL else 'Нет'}")
     print("=" * 50)
     
     try:
