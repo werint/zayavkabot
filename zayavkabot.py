@@ -548,7 +548,7 @@ async def send_application_embed(channel, application, interaction_user, guild):
             reason_input = discord.ui.TextInput(
                 label="Укажите причину отказа",
                 style=discord.TextStyle.paragraph,
-                placeholder="Например: стрельба мушмент",
+                placeholder="Например: стрельба мувмент",
                 required=True,
                 max_length=500
             )
@@ -636,6 +636,10 @@ async def send_log_to_channel(application, moderator, action, reason=None, guild
         
         embed.add_field(name="Никнейм Статик", value=application.username_static, inline=False)
         embed.add_field(name="OOC имя возраст", value=application.ooc_info, inline=False)
+        
+        # Добавляем поле для откатов с ГГ
+        if application.rollbacks and application.rollbacks != "Не указано":
+            embed.add_field(name="Откаты с ГГ", value=application.rollbacks[:500] + "..." if len(application.rollbacks) > 500 else application.rollbacks, inline=False)
         
         if application.fam_history:
             embed.add_field(name="История семей", value=application.fam_history[:500] + "..." if len(application.fam_history) > 500 else application.fam_history, inline=False)
