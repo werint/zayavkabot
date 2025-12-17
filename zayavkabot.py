@@ -99,9 +99,9 @@ class Application:
             rollbacks=data["rollbacks"],
             discord_user=data["discord_user"],
             discord_id=data["discord_id"],
-            message_id=data.get("message_id"),
+            message_id=str(data.get("message_id")) if data.get("message_id") else None,  # Преобразуем
             status=data.get("status", "pending"),
-            channel_id=data.get("channel_id"),
+            channel_id=str(data.get("channel_id")) if data.get("channel_id") else None,  # Преобразуем
             moderator=data.get("moderator"),
             reason_reject=data.get("reason_reject"),
             created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.now(),
@@ -181,8 +181,11 @@ async def save_application(application):
                 ''', 
                 application.username_static, application.ooc_info, application.fam_history,
                 application.reason, application.rollbacks, application.discord_user,
-                application.discord_id, application.message_id, application.status,
-                application.channel_id, application.moderator, application.reason_reject,
+                application.discord_id, 
+                str(application.message_id) if application.message_id else None,  # Преобразуем в строку
+                application.status,
+                str(application.channel_id) if application.channel_id else None,  # Тоже преобразуем
+                application.moderator, application.reason_reject,
                 application.id)
             else:
                 # Вставляем новую запись
@@ -195,8 +198,11 @@ async def save_application(application):
                 ''',
                 application.username_static, application.ooc_info, application.fam_history,
                 application.reason, application.rollbacks, application.discord_user,
-                application.discord_id, application.message_id, application.status,
-                application.channel_id, application.moderator, application.reason_reject)
+                application.discord_id, 
+                str(application.message_id) if application.message_id else None,  # Преобразуем в строку
+                application.status,
+                str(application.channel_id) if application.channel_id else None,  # Тоже преобразуем
+                application.moderator, application.reason_reject)
                 
                 if record:
                     application.id = record['id']
