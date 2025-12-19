@@ -430,7 +430,7 @@ async def send_application_embed(channel, application, interaction_user, guild):
             rollbacks_text = rollbacks_text[3:-3].strip()
         
         # Добавляем поля
-        embed.add_field(name="Никнейм Статик", value=f"```{application.username_static}```", inline=False)
+        embed.add_field(name="Никнейм Статик и онлайн в день", value=f"```{application.username_static}```", inline=False)
         embed.add_field(name="OOC имя возраст", value=f"```{application.ooc_info}```", inline=False)
         embed.add_field(name="История семей", value=f"```{application.fam_history}```", inline=False)
         embed.add_field(name="Почему выбрали именно нас?", value=f"```{application.reason}```", inline=False)
@@ -662,7 +662,7 @@ class ApplicationForm(discord.ui.Modal, title='Подача заявки в се
     
     nickname_static = discord.ui.TextInput(
         label='Никнейм и Статик',
-        placeholder='Например: Skeet Nyam 2253',
+        placeholder='Например: Skeet Nyam 2253 6+ часов',
         max_length=100,
         required=True
     )
