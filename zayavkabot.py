@@ -661,7 +661,7 @@ class ApplicationForm(discord.ui.Modal, title='Подача заявки в се
     """Модальная форма для подачи заявки"""
     
     nickname_static = discord.ui.TextInput(
-        label='Никнейм и Статик',
+        label='Никнейм и Статик Средний онлайн за день',
         placeholder='Например: Skeet Nyam 2253 6+ часов',
         max_length=100,
         required=True
