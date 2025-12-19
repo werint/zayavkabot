@@ -110,49 +110,26 @@ class Application:
         return app
 
 async def init_database():
-    """Инициализация базы данных"""
+    """Подключение к существующей базе данных (без создания таблиц)"""
     global db_pool
     try:
         # Создаем пул подключений
         db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=10)
         print("✅ Подключение к PostgreSQL установлено")
         
-        # Создаем таблицу, если она не существует
+        # ПРОИЗВЕДЕНО ИЗМЕНЕНИЕ №3: Убрано создание таблиц - просто проверяем подключение
         async with db_pool.acquire() as conn:
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS applications (
-                    id SERIAL PRIMARY KEY,
-                    username_static TEXT NOT NULL,
-                    ooc_info TEXT NOT NULL,
-                    fam_history TEXT NOT NULL,
-                    reason TEXT NOT NULL,
-                    rollbacks TEXT,
-                    discord_user TEXT NOT NULL,
-                    discord_id TEXT NOT NULL,
-                    message_id TEXT,
-                    status TEXT DEFAULT 'pending',
-                    channel_id TEXT,
-                    moderator TEXT,
-                    reason_reject TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            
-            # Создаем индекс для быстрого поиска по discord_id
-            await conn.execute('''
-                CREATE INDEX IF NOT EXISTS idx_discord_id ON applications(discord_id)
-            ''')
-            
-            # Создаем индекс для поиска по статусу
-            await conn.execute('''
-                CREATE INDEX IF NOT EXISTS idx_status ON applications(status)
-            ''')
-            
-            print("✅ Таблица applications готова")
+            # Простая проверка подключения - проверяем существование таблицы
+            try:
+                await conn.fetchval("SELECT COUNT(*) FROM applications LIMIT 1")
+                print("✅ Таблица applications найдена")
+            except Exception as e:
+                print(f"❌ Таблица applications не найдена: {e}")
+                # Если таблица не существует, можно создать её, но по условию задачи она уже существует
+                raise Exception("Таблица applications должна быть создана заранее")
             
     except Exception as e:
-        print(f"❌ Ошибка при инициализации базы данных: {e}")
+        print(f"❌ Ошибка при подключении к базе данных: {e}")
         traceback.print_exc()
         raise
 
@@ -446,12 +423,19 @@ async def send_application_embed(channel, application, interaction_user, guild):
             timestamp=application.created_at
         )
         
+        # ИЗМЕНЕНИЕ №2: Убираем кодовые блоки (```) с ссылок в rollbacks
+        rollbacks_text = application.rollbacks
+        # Убираем кодовые блоки если они есть
+        if rollbacks_text and rollbacks_text.startswith("```") and rollbacks_text.endswith("```"):
+            rollbacks_text = rollbacks_text[3:-3].strip()
+        
         # Добавляем поля
         embed.add_field(name="Никнейм Статик", value=f"```{application.username_static}```", inline=False)
         embed.add_field(name="OOC имя возраст", value=f"```{application.ooc_info}```", inline=False)
         embed.add_field(name="История семей", value=f"```{application.fam_history}```", inline=False)
         embed.add_field(name="Почему выбрали именно нас?", value=f"```{application.reason}```", inline=False)
-        embed.add_field(name="Откаты с ГГ", value=f"```{application.rollbacks}```", inline=False)
+        # Используем очищенный текст для rollbacks
+        embed.add_field(name="Откаты с ГГ", value=f"{rollbacks_text}", inline=False)
         embed.add_field(name="Пользователь", value=f"<@{application.discord_id}>", inline=False)
         embed.add_field(name="Username", value=f"```{application.discord_user}```", inline=True)
         embed.add_field(name="ID", value=f"```{application.discord_id}```", inline=True)
@@ -562,7 +546,7 @@ async def send_application_embed(channel, application, interaction_user, guild):
             
             async def modal_callback(modal_interaction: discord.Interaction):
                 application.status = "rejected"
-                application.moderator = interaction_btn.user.name
+                application.moderator = modal_interaction.user.name
                 application.reason_reject = reason_input.value
                 application.updated_at = datetime.now()
                 await save_application(application)
@@ -573,16 +557,18 @@ async def send_application_embed(channel, application, interaction_user, guild):
                 except Exception as e:
                     print(f"Не удалось отправить сообщение пользователю: {e}")
                 
-                await send_log_to_channel(application, interaction_btn.user, "rejected", reason_input.value, guild)
+                await send_log_to_channel(application, modal_interaction.user, "rejected", reason_input.value, guild)
                 
                 try:
-                    await interaction_btn.message.edit(view=None)
+                    # ИСПРАВЛЕНИЕ ОШИБКИ: Используем modal_interaction вместо interaction_btn
+                    await modal_interaction.message.edit(view=None)
                 except:
                     pass
                 
-                await channel.send(f"**Заявка отклонена рекрутом <@{interaction_btn.user.id}>**\n**Причина:** {reason_input.value}")
+                await channel.send(f"**Заявка отклонена рекрутом <@{modal_interaction.user.id}>**\n**Причина:** {reason_input.value}")
                 bot.loop.create_task(delete_application_channel(channel))
                 
+                # ИСПРАВЛЕНИЕ ОШИБКИ: Используем modal_interaction.response
                 await modal_interaction.response.send_message("✅ Заявка отклонена! Канал будет удален через 5 секунд.", ephemeral=True)
             
             modal.on_submit = modal_callback
@@ -640,18 +626,22 @@ async def send_log_to_channel(application, moderator, action, reason=None, guild
             timestamp=application.updated_at
         )
         
+        # ИСПРАВЛЕНИЕ: правильный порядок полей как в заявке
         embed.add_field(name="Никнейм Статик", value=application.username_static, inline=False)
         embed.add_field(name="OOC имя возраст", value=application.ooc_info, inline=False)
+        embed.add_field(name="История семей", value=application.fam_history[:500] + "..." if len(application.fam_history) > 500 else application.fam_history, inline=False)
         
-        # Добавляем поле для откатов с ГГ
-        if application.rollbacks and application.rollbacks != "Не указано":
-            embed.add_field(name="Откаты с ГГ", value=application.rollbacks[:500] + "..." if len(application.rollbacks) > 500 else application.rollbacks, inline=False)
-        
-        if application.fam_history:
-            embed.add_field(name="История семей", value=application.fam_history[:500] + "..." if len(application.fam_history) > 500 else application.fam_history, inline=False)
-        
+        # Причина выбора
         if application.reason:
             embed.add_field(name="Причина выбора", value=application.reason[:500] + "..." if len(application.reason) > 500 else application.reason, inline=False)
+        
+        # Откаты с ГГ
+        if application.rollbacks and application.rollbacks != "Не указано":
+            rollbacks_text = application.rollbacks
+            # Убираем кодовые блоки если они есть
+            if rollbacks_text.startswith("```") and rollbacks_text.endswith("```"):
+                rollbacks_text = rollbacks_text[3:-3].strip()
+            embed.add_field(name="Откаты с ГГ", value=rollbacks_text[:500] + "..." if len(rollbacks_text) > 500 else rollbacks_text, inline=False)
         
         embed.add_field(name="Пользователь", value=f"<@{application.discord_id}>", inline=False)
         embed.add_field(name="Username", value=application.discord_user, inline=True)
@@ -661,7 +651,7 @@ async def send_log_to_channel(application, moderator, action, reason=None, guild
             embed.add_field(name="Принял", value=f"<@{moderator.id}>", inline=False)
         elif action == "rejected":
             embed.add_field(name="Отклонил", value=f"<@{moderator.id}>", inline=False)
-            embed.add_field(name="Причина", value=reason[:500] + "..." if len(reason) > 500 else reason, inline=False)
+            embed.add_field(name="Причина отказа", value=reason[:500] + "..." if len(reason) > 500 else reason, inline=False)
         
         await logs_channel.send(embed=embed)
     except Exception as e:
@@ -795,7 +785,8 @@ async def on_error(event, *args, **kwargs):
     print(f'Ошибка в событии {event}:')
     traceback.print_exc()
 
-@bot.command(name="заявка")
+# ИЗМЕНЕНО: команда переименована с "заявка" на "заявко"
+@bot.command(name="заявко")
 async def create_application_panel(ctx):
     """Создает панель для подачи заявки"""
     try:
