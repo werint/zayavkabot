@@ -29,7 +29,6 @@ intents.guilds = True
 intents.members = True
 
 bot = commands.Bot(command_prefix='!', intents=intents)
-tree = app_commands.CommandTree(bot)
 
 # ID каналов для основного сервера
 LOGS_CHANNEL_ID = 1317565432210915379  # Канал для логов
@@ -135,7 +134,6 @@ async def init_database():
         db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=10)
         print("✅ Подключение к PostgreSQL установлено")
         
-        # ПРОИЗВЕДЕНО ИЗМЕНЕНИЕ №3: Убрано создание таблиц - просто проверяем подключение
         async with db_pool.acquire() as conn:
             # Простая проверка подключения - проверяем существование таблицы
             try:
@@ -143,7 +141,6 @@ async def init_database():
                 print("✅ Таблица applications найдена")
             except Exception as e:
                 print(f"❌ Таблица applications не найдена: {e}")
-                # Если таблица не существует, можно создать её, но по условию задачи она уже существует
                 raise Exception("Таблица applications должна быть создана заранее")
             
     except Exception as e:
@@ -156,7 +153,6 @@ async def save_application(application):
     try:
         async with db_pool.acquire() as conn:
             if application.id:
-                # Обновляем существующую запись
                 await conn.execute('''
                     UPDATE applications SET
                         username_static = $1,
@@ -177,13 +173,12 @@ async def save_application(application):
                 application.username_static, application.ooc_info, application.fam_history,
                 application.reason, application.rollbacks, application.discord_user,
                 application.discord_id, 
-                str(application.message_id) if application.message_id else None,  # Преобразуем в строку
+                str(application.message_id) if application.message_id else None,
                 application.status,
-                str(application.channel_id) if application.channel_id else None,  # Тоже преобразуем
+                str(application.channel_id) if application.channel_id else None,
                 application.moderator, application.reason_reject,
                 application.id)
             else:
-                # Вставляем новую запись
                 record = await conn.fetchrow('''
                     INSERT INTO applications 
                     (username_static, ooc_info, fam_history, reason, rollbacks, discord_user, 
@@ -194,9 +189,9 @@ async def save_application(application):
                 application.username_static, application.ooc_info, application.fam_history,
                 application.reason, application.rollbacks, application.discord_user,
                 application.discord_id, 
-                str(application.message_id) if application.message_id else None,  # Преобразуем в строку
+                str(application.message_id) if application.message_id else None,
                 application.status,
-                str(application.channel_id) if application.channel_id else None,  # Тоже преобразуем
+                str(application.channel_id) if application.channel_id else None,
                 application.moderator, application.reason_reject)
                 
                 if record:
@@ -371,7 +366,6 @@ async def create_application_channel(guild, discord_user, discord_id, applicatio
         
         channel_name = f"заявление-{clean_name}"
         
-        # Используем фиксированный ID категории для заявок
         category = guild.get_channel(APPLICATIONS_CATEGORY_ID)
         if not category:
             category = await guild.create_category("Заявки")
@@ -381,7 +375,6 @@ async def create_application_channel(guild, discord_user, discord_id, applicatio
             guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True)
         }
         
-        # Добавляем доступ для админских ролей
         for role_id in TAG_ROLE_IDS:
             role = guild.get_role(role_id)
             if role:
@@ -410,7 +403,7 @@ async def create_application_channel(guild, discord_user, discord_id, applicatio
         raise
 
 async def delete_application_channel(channel, delay_seconds=5):
-    """Удаляет канал заявки с задержкой (теперь 5 секунд вместо 300)"""
+    """Удаляет канал заявки с задержкой"""
     await asyncio.sleep(delay_seconds)
     try:
         await channel.delete(reason="Заявка обработана")
@@ -420,45 +413,37 @@ async def delete_application_channel(channel, delay_seconds=5):
 async def send_application_embed(channel, application, interaction_user, guild):
     """Отправляет заявку в новом формате"""
     try:
-        # Собираем теги для всех админских ролей
         role_mentions = []
         for role_id in TAG_ROLE_IDS:
             role = guild.get_role(role_id)
             if role:
                 role_mentions.append(f"<@&{role.id}>")
         
-        # Отправляем упоминания ролей
         if role_mentions:
             mentions_text = " ".join(role_mentions)
             await channel.send(f"{mentions_text} Новая заявка!")
         else:
             await channel.send("Новая заявка!")
         
-        # Создаем Embed для заявки с временем
         embed = discord.Embed(
             title="Заявление",
             color=discord.Color.blue(),
             timestamp=application.created_at
         )
         
-        # ИЗМЕНЕНИЕ №2: Убираем кодовые блоки (```) с ссылок в rollbacks
         rollbacks_text = application.rollbacks
-        # Убираем кодовые блоки если они есть
         if rollbacks_text and rollbacks_text.startswith("```") and rollbacks_text.endswith("```"):
             rollbacks_text = rollbacks_text[3:-3].strip()
         
-        # Добавляем поля
-        embed.add_field(name="Никнейм Статик  и онлайн в день", value=f"```{application.username_static}```", inline=False)
+        embed.add_field(name="Никнейм Статик", value=f"```{application.username_static}```", inline=False)
         embed.add_field(name="OOC имя возраст", value=f"```{application.ooc_info}```", inline=False)
         embed.add_field(name="История семей", value=f"```{application.fam_history}```", inline=False)
         embed.add_field(name="Почему выбрали именно нас?", value=f"```{application.reason}```", inline=False)
-        # Используем очищенный текст для rollbacks
         embed.add_field(name="Откаты с ГГ", value=f"{rollbacks_text}", inline=False)
         embed.add_field(name="Пользователь", value=f"<@{application.discord_id}>", inline=False)
         embed.add_field(name="Username", value=f"```{application.discord_user}```", inline=True)
         embed.add_field(name="ID", value=f"```{application.discord_id}```", inline=True)
         
-        # Проверяем предыдущие заявки пользователя
         user_previous_apps = await get_user_applications(application.discord_id)
         user_previous_apps = [app for app in user_previous_apps if app.status != "pending" and app.id != application.id]
         
@@ -469,30 +454,22 @@ async def send_application_embed(channel, application, interaction_user, guild):
                 async for message in logs_channel.history(limit=200):
                     if message.embeds:
                         for embed_msg in message.embeds:
-                            # Ищем поле с ID пользователя в embed
                             user_found = False
-                            user_id_in_embed = None
-                            
-                            # Проверяем все поля embed на наличие ID пользователя
                             for field in embed_msg.fields:
                                 if field.value and application.discord_id in field.value:
                                     user_found = True
-                                    user_id_in_embed = application.discord_id
                                     break
                             
-                            # Также проверяем description и title
                             if not user_found and embed_msg.description and application.discord_id in embed_msg.description:
                                 user_found = True
-                                user_id_in_embed = application.discord_id
                             
-                            if user_found and user_id_in_embed == application.discord_id:
-                                # Определяем статус заявки
+                            if user_found:
                                 status_icon = "✅" if embed_msg.title and "✅" in embed_msg.title else "❌"
                                 log_links.append(f"{status_icon} [Ссылка]({message.jump_url})")
-                                break  # Нашли нужное сообщение, выходим из цикла по embed'ам
+                                break
             
             if log_links:
-                links_text = "\n".join(log_links[:5])  # Максимум 5 ссылок
+                links_text = "\n".join(log_links[:5])
                 embed.add_field(
                     name="Предыдущие заявки",
                     value=links_text,
@@ -511,13 +488,10 @@ async def send_application_embed(channel, application, interaction_user, guild):
                 inline=False
             )
         
-        # Отправляем Embed
         message = await channel.send(embed=embed)
         
-        # Создаем кнопки
         view = discord.ui.View(timeout=None)
         
-        # Кнопка Принять
         async def approve_callback(interaction_btn: discord.Interaction):
             if not has_admin_permission(interaction_btn.user):
                 await interaction_btn.response.send_message("❌ У вас нет прав для этого действия", ephemeral=True)
@@ -546,7 +520,6 @@ async def send_application_embed(channel, application, interaction_user, guild):
             
             await interaction_btn.response.send_message("✅ Заявка принята! Канал будет удален через 5 секунд.", ephemeral=True)
         
-        # Кнопка Отклонить
         async def reject_callback(interaction_btn: discord.Interaction):
             if not has_admin_permission(interaction_btn.user):
                 await interaction_btn.response.send_message("❌ У вас нет прав для этого действия", ephemeral=True)
@@ -563,7 +536,6 @@ async def send_application_embed(channel, application, interaction_user, guild):
             modal.add_item(reason_input)
             
             async def modal_callback(modal_interaction: discord.Interaction):
-                # Сначала отвечаем на модальное окно, чтобы избежать ошибки Unknown interaction
                 await modal_interaction.response.defer(ephemeral=True)
                 
                 application.status = "rejected"
@@ -581,7 +553,6 @@ async def send_application_embed(channel, application, interaction_user, guild):
                 await send_log_to_channel(application, modal_interaction.user, "rejected", reason_input.value, guild)
                 
                 try:
-                    # ИСПРАВЛЕНИЕ ОШИБКИ: Используем modal_interaction вместо interaction_btn
                     await modal_interaction.message.edit(view=None)
                 except:
                     pass
@@ -589,25 +560,19 @@ async def send_application_embed(channel, application, interaction_user, guild):
                 await channel.send(f"**Заявка отклонена рекрутом <@{modal_interaction.user.id}>**\n**Причина:** {reason_input.value}")
                 bot.loop.create_task(delete_application_channel(channel))
                 
-                # Используем followup после defer
                 await modal_interaction.followup.send("✅ Заявка отклонена! Канал будет удален через 5 секунд.", ephemeral=True)
             
             modal.on_submit = modal_callback
             await interaction_btn.response.send_modal(modal)
         
-        # Кнопка Взять на рассмотрение
         async def consider_callback(interaction_btn: discord.Interaction):
             if not has_admin_permission(interaction_btn.user):
                 await interaction_btn.response.send_message("❌ У вас нет прав для этого действия", ephemeral=True)
                 return
             
-            # Сразу отвечаем
             await interaction_btn.response.defer()
-            
-            # Отправляем сообщение в канал
             await channel.send(f"**Заявка взята на рассмотрение рекрутом <@{interaction_btn.user.id}>**")
         
-        # Создаем кнопки
         approve_button = discord.ui.Button(style=discord.ButtonStyle.green, label="Принять", row=0)
         approve_button.callback = approve_callback
         
@@ -621,14 +586,12 @@ async def send_application_embed(channel, application, interaction_user, guild):
         view.add_item(consider_button)
         view.add_item(reject_button)
         
-        # Отправляем кнопки
-        buttons_message = await channel.send(view=view)
+        await channel.send(view=view)
         
-        # Сохраняем ID сообщения
         application.message_id = message.id
         await save_application(application)
         
-        return message, buttons_message
+        return message, None
     except Exception as e:
         print(f"Ошибка отправки embed: {e}")
         raise
@@ -647,19 +610,15 @@ async def send_log_to_channel(application, moderator, action, reason=None, guild
             timestamp=application.updated_at
         )
         
-        # ИСПРАВЛЕНИЕ: правильный порядок полей как в заявке
         embed.add_field(name="Никнейм Статик", value=application.username_static, inline=False)
         embed.add_field(name="OOC имя возраст", value=application.ooc_info, inline=False)
         embed.add_field(name="История семей", value=application.fam_history[:500] + "..." if len(application.fam_history) > 500 else application.fam_history, inline=False)
         
-        # Причина выбора
         if application.reason:
             embed.add_field(name="Причина выбора", value=application.reason[:500] + "..." if len(application.reason) > 500 else application.reason, inline=False)
         
-        # Откаты с ГГ
         if application.rollbacks and application.rollbacks != "Не указано":
             rollbacks_text = application.rollbacks
-            # Убираем кодовые блоки если они есть
             if rollbacks_text.startswith("```") and rollbacks_text.endswith("```"):
                 rollbacks_text = rollbacks_text[3:-3].strip()
             embed.add_field(name="Откаты с ГГ", value=rollbacks_text[:500] + "..." if len(rollbacks_text) > 500 else rollbacks_text, inline=False)
@@ -721,7 +680,6 @@ class ApplicationForm(discord.ui.Modal, title='Подача заявки в се
     
     async def on_submit(self, interaction: discord.Interaction):
         try:
-            # Проверяем, есть ли у пользователя активная заявка
             user_active_apps = await get_user_applications(str(interaction.user.id))
             user_active_apps = [app for app in user_active_apps if app.status == "pending"]
             
@@ -733,7 +691,6 @@ class ApplicationForm(discord.ui.Modal, title='Подача заявки в се
                 )
                 return
             
-            # Сразу отвечаем на взаимодействие
             await interaction.response.defer(ephemeral=True)
             
             application = Application(
@@ -749,9 +706,8 @@ class ApplicationForm(discord.ui.Modal, title='Подача заявки в се
             channel = await create_application_channel(interaction.guild, interaction.user.name, interaction.user.id, application)
             application.channel_id = channel.id
             
-            message, buttons_message = await send_application_embed(channel, application, interaction.user, interaction.guild)
+            message, _ = await send_application_embed(channel, application, interaction.user, interaction.guild)
             
-            # Используем followup для отправки ответа
             await interaction.followup.send(
                 f"✅ Ваша заявка успешно отправлена!\n\n"
                 f"Заявка рассматривается в течение суток.\n"
@@ -764,42 +720,37 @@ class ApplicationForm(discord.ui.Modal, title='Подача заявки в се
             print(f"Ошибка при создании заявки: {e}")
             traceback.print_exc()
             try:
-                # Пытаемся отправить сообщение об ошибке через followup
                 await interaction.followup.send(
                     "❌ Ошибка при создании заявки. Пожалуйста, попробуйте позже.", 
                     ephemeral=True
                 )
             except:
-                pass  # Если не получилось, просто игнорируем
+                pass
     
     async def on_error(self, interaction: discord.Interaction, error: Exception):
         print(f"Ошибка в форме заявки: {error}")
         traceback.print_exc()
         try:
-            # Используем followup для обработки ошибок
             await interaction.followup.send(
                 '❌ Произошла ошибка при отправке заявки. Пожалуйста, попробуйте позже.', 
                 ephemeral=True
             )
         except:
-            pass  # Если не получилось, просто игнорируем
+            pass
 
 @bot.event
 async def on_ready():
     print(f'✅ {bot.user} запущен!')
     print(f'ID бота: {bot.user.id}')
     
-    # Инициализируем базу данных
     await init_database()
     
-    # Синхронизируем slash-команды
     try:
-        synced = await tree.sync()
+        synced = await bot.tree.sync()
         print(f"✅ Синхронизировано {len(synced)} slash-команд")
     except Exception as e:
         print(f"❌ Ошибка синхронизации slash-команд: {e}")
     
-    # Выводим информацию о серверах
     for guild in bot.guilds:
         print(f'Сервер: {guild.name} (ID: {guild.id})')
         if guild.id == 1003525677640851496:
@@ -816,15 +767,13 @@ async def on_error(event, *args, **kwargs):
 
 # ============ SLASH COMMANDS ============
 
-# Slash-команда для создания панели заявки
-@tree.command(
+@bot.tree.command(
     name="заявко",
     description="Создает панель для подачи заявки в семью"
 )
 async def slash_create_application_panel(interaction: discord.Interaction):
     """Slash-команда для создания панели заявки"""
     try:
-        # Проверяем права пользователя
         if not has_slash_command_permission(interaction):
             await interaction.response.send_message(
                 "❌ У вас нет прав для выполнения этой команды.\n"
@@ -833,10 +782,9 @@ async def slash_create_application_panel(interaction: discord.Interaction):
             )
             return
         
-        # Создаем Embed с обновленным дизайном
         embed = discord.Embed(
             title="**ЗАЯВКА В СЕМЬЮ**",
-            color=discord.Color.from_rgb(0, 0, 0)  # Чёрный цвет
+            color=discord.Color.from_rgb(0, 0, 0)
         )
         
         embed.add_field(
@@ -851,7 +799,6 @@ async def slash_create_application_panel(interaction: discord.Interaction):
         embed.set_image(url=IMAGE_URL)
         embed.set_footer(text="Amnyamov famq", icon_url=SMALL_ICON_URL)
         
-        # Отправляем Embed с обновленной кнопкой
         class ApplicationButtonView(discord.ui.View):
             def __init__(self):
                 super().__init__(timeout=None)
@@ -867,22 +814,19 @@ async def slash_create_application_panel(interaction: discord.Interaction):
                 await interaction.response.send_modal(ApplicationForm())
         
         await interaction.response.send_message(embed=embed, view=ApplicationButtonView())
-        bot.add_view(ApplicationButtonView())
         
     except Exception as e:
         print(f"Ошибка команды заявка: {e}")
         traceback.print_exc()
         await interaction.response.send_message("❌ Произошла ошибка при создании панели.", ephemeral=True)
 
-# Slash-команда для просмотра заявок
-@tree.command(
+@bot.tree.command(
     name="заявки",
     description="Показать все заявки"
 )
 async def slash_applications_list(interaction: discord.Interaction):
     """Slash-команда для просмотра заявок"""
     try:
-        # Проверяем права пользователя
         if not has_slash_command_permission(interaction):
             await interaction.response.send_message(
                 "❌ У вас нет прав для выполнения этой команды.\n"
@@ -909,7 +853,7 @@ async def slash_applications_list(interaction: discord.Interaction):
         
         if pending_apps:
             apps_text = ""
-            for app in pending_apps[:5]:  # Берем первые 5
+            for app in pending_apps[:5]:
                 channel_info = f"<#{app.channel_id}>" if app.channel_id else "Канал не создан"
                 apps_text += f"• **{app.username_static}** - {channel_info}\n"
             embed.add_field(name="Последние заявки:", value=apps_text, inline=False)
@@ -920,15 +864,13 @@ async def slash_applications_list(interaction: discord.Interaction):
         traceback.print_exc()
         await interaction.response.send_message("❌ Произошла ошибка при получении списка заявок.", ephemeral=True)
 
-# Slash-команда для очистки каналов
-@tree.command(
+@bot.tree.command(
     name="очистка",
     description="Очистка старых каналов с заявками"
 )
 async def slash_cleanup_channels(interaction: discord.Interaction):
     """Slash-команда для очистки каналов"""
     try:
-        # Проверяем права пользователя
         if not has_slash_command_permission(interaction):
             await interaction.response.send_message(
                 "❌ У вас нет прав для выполнения этой команды.\n"
@@ -939,7 +881,6 @@ async def slash_cleanup_channels(interaction: discord.Interaction):
         
         await interaction.response.defer()
         
-        # Используем фиксированный ID категории
         category = interaction.guild.get_channel(APPLICATIONS_CATEGORY_ID)
         
         if not category:
@@ -963,8 +904,7 @@ async def slash_cleanup_channels(interaction: discord.Interaction):
         traceback.print_exc()
         await interaction.followup.send("❌ Произошла ошибка при очистке каналов.")
 
-# Slash-команда для проверки статуса заявки
-@tree.command(
+@bot.tree.command(
     name="статус",
     description="Проверить статус заявки пользователя"
 )
@@ -974,7 +914,6 @@ async def slash_cleanup_channels(interaction: discord.Interaction):
 async def slash_application_status(interaction: discord.Interaction, пользователь: discord.User = None):
     """Slash-команда для проверки статуса заявки"""
     try:
-        # Проверяем права пользователя
         if not has_slash_command_permission(interaction):
             await interaction.response.send_message(
                 "❌ У вас нет прав для выполнения этой команды.\n"
@@ -1002,7 +941,7 @@ async def slash_application_status(interaction: discord.Interaction, польз�
             timestamp=datetime.now()
         )
         
-        for i, app in enumerate(user_apps[:3], 1):  # Берем первые 3
+        for i, app in enumerate(user_apps[:3], 1):
             status_emoji = "⏳" if app.status == "pending" else "✅" if app.status == "approved" else "❌"
             status_text = "На рассмотрении" if app.status == "pending" else "Принята" if app.status == "approved" else "Отклонена"
             
@@ -1028,8 +967,7 @@ async def slash_application_status(interaction: discord.Interaction, польз�
         traceback.print_exc()
         await interaction.response.send_message("❌ Произошла ошибка при проверке статуса.", ephemeral=True)
 
-# Slash-команда для удаления канала
-@tree.command(
+@bot.tree.command(
     name="удалить_канал",
     description="Вручную удалить канал заявки"
 )
@@ -1039,7 +977,6 @@ async def slash_application_status(interaction: discord.Interaction, польз�
 async def slash_delete_channel_manual(interaction: discord.Interaction, канал: discord.TextChannel = None):
     """Slash-команда для удаления канала"""
     try:
-        # Проверяем права пользователя
         if not has_slash_command_permission(interaction):
             await interaction.response.send_message(
                 "❌ У вас нет прав для выполнения этой команды.\n"
@@ -1049,7 +986,6 @@ async def slash_delete_channel_manual(interaction: discord.Interaction, кана
             return
         
         if канал is None:
-            # Проверяем, находится ли текущий канал в категории заявок
             category = interaction.guild.get_channel(APPLICATIONS_CATEGORY_ID)
             
             if category and interaction.channel.category_id == category.id:
@@ -1070,15 +1006,13 @@ async def slash_delete_channel_manual(interaction: discord.Interaction, кана
         traceback.print_exc()
         await interaction.response.send_message(f"❌ Ошибка при удалении канала: {str(e)}", ephemeral=True)
 
-# Slash-команда для теста
-@tree.command(
+@bot.tree.command(
     name="тест",
     description="Тестовая команда для проверки работы бота"
 )
 async def slash_test_command(interaction: discord.Interaction):
     """Slash-команда для теста"""
     try:
-        # Проверяем права пользователя
         if not has_slash_command_permission(interaction):
             await interaction.response.send_message(
                 "❌ У вас нет прав для выполнения этой команды.\n"
@@ -1093,7 +1027,7 @@ async def slash_test_command(interaction: discord.Interaction):
         traceback.print_exc()
         await interaction.response.send_message("❌ Произошла ошибка при выполнении команды.", ephemeral=True)
 
-# ============ КОМАНДЫ С ПРЕФИКСОМ ! (ОСТАВЛЯЕМ ДЛЯ ОБРАТНОЙ СОВМЕСТИМОСТИ) ============
+# ============ КОМАНДЫ С ПРЕФИКСОМ ! ============
 
 @bot.command(name="заявко")
 @commands.has_any_role(*SLASH_COMMAND_ROLE_IDS)
@@ -1145,7 +1079,6 @@ async def on_command_error(ctx, error):
         traceback.print_exc()
         await ctx.send("❌ Произошла ошибка при выполнении команды.")
 
-# Добавляем хендлер для перезапуска при ошибках
 @bot.event
 async def on_disconnect():
     print("Бот отключился. Пытаюсь переподключиться...")
