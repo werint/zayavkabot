@@ -1,6 +1,7 @@
 import os
 import discord
 from discord.ext import commands
+from discord import app_commands
 import json
 import re
 from datetime import datetime
@@ -28,6 +29,7 @@ intents.guilds = True
 intents.members = True
 
 bot = commands.Bot(command_prefix='!', intents=intents)
+tree = app_commands.CommandTree(bot)
 
 # ID каналов для основного сервера
 LOGS_CHANNEL_ID = 1317565432210915379  # Канал для логов
@@ -42,12 +44,28 @@ TAG_ROLE_IDS = [
     1381683377090068550
 ]
 
+# ID ролей для использования slash-команд (только эти две роли)
+SLASH_COMMAND_ROLE_IDS = [1310673963000528949, 1381685630555258931]
+
 # URL изображений для заявки
 IMAGE_URL = "https://media.discordapp.net/attachments/1189879069991510066/1449528629775302698/zastavki-gas-kvas-com-n1e0-p-zastavki-na-telefon-am-nyam-2.png?ex=694285fc&is=6941347c&hm=560b40c38fbc83ae9821b60df73fadefb0d917eb0082f53635350b686b33b605&=&format=webp&quality=lossless"
 SMALL_ICON_URL = "https://cdn.discordapp.com/attachments/1381981605848944720/1449946500057792543/4.png?ex=6940bf68&is=693f6de8&hm=df622f91cff0f82216929fb398fbc04aea2ab256c4323a18840538c0bbdabb08&"
 
 # Глобальный пул подключений к БД
 db_pool = None
+
+# Функция проверки прав для slash-команд
+def has_slash_command_permission(interaction: discord.Interaction):
+    """Проверяет, есть ли у пользователя права на использование slash-команд"""
+    try:
+        for role_id in SLASH_COMMAND_ROLE_IDS:
+            role = discord.utils.get(interaction.user.roles, id=role_id)
+            if role:
+                return True
+        return False
+    except Exception as e:
+        print(f"Ошибка проверки прав для slash-команд: {e}")
+        return False
 
 class Application:
     def __init__(self, username_static, ooc_info, fam_history, reason, rollbacks, discord_user, discord_id, 
@@ -430,7 +448,7 @@ async def send_application_embed(channel, application, interaction_user, guild):
             rollbacks_text = rollbacks_text[3:-3].strip()
         
         # Добавляем поля
-        embed.add_field(name="Никнейм Статик и онлайн в день", value=f"```{application.username_static}```", inline=False)
+        embed.add_field(name="Никнейм Статик  и онлайн в день", value=f"```{application.username_static}```", inline=False)
         embed.add_field(name="OOC имя возраст", value=f"```{application.ooc_info}```", inline=False)
         embed.add_field(name="История семей", value=f"```{application.fam_history}```", inline=False)
         embed.add_field(name="Почему выбрали именно нас?", value=f"```{application.reason}```", inline=False)
@@ -545,6 +563,9 @@ async def send_application_embed(channel, application, interaction_user, guild):
             modal.add_item(reason_input)
             
             async def modal_callback(modal_interaction: discord.Interaction):
+                # Сначала отвечаем на модальное окно, чтобы избежать ошибки Unknown interaction
+                await modal_interaction.response.defer(ephemeral=True)
+                
                 application.status = "rejected"
                 application.moderator = modal_interaction.user.name
                 application.reason_reject = reason_input.value
@@ -568,8 +589,8 @@ async def send_application_embed(channel, application, interaction_user, guild):
                 await channel.send(f"**Заявка отклонена рекрутом <@{modal_interaction.user.id}>**\n**Причина:** {reason_input.value}")
                 bot.loop.create_task(delete_application_channel(channel))
                 
-                # ИСПРАВЛЕНИЕ ОШИБКИ: Используем modal_interaction.response
-                await modal_interaction.response.send_message("✅ Заявка отклонена! Канал будет удален через 5 секунд.", ephemeral=True)
+                # Используем followup после defer
+                await modal_interaction.followup.send("✅ Заявка отклонена! Канал будет удален через 5 секунд.", ephemeral=True)
             
             modal.on_submit = modal_callback
             await interaction_btn.response.send_modal(modal)
@@ -771,12 +792,20 @@ async def on_ready():
     # Инициализируем базу данных
     await init_database()
     
+    # Синхронизируем slash-команды
+    try:
+        synced = await tree.sync()
+        print(f"✅ Синхронизировано {len(synced)} slash-команд")
+    except Exception as e:
+        print(f"❌ Ошибка синхронизации slash-команд: {e}")
+    
     # Выводим информацию о серверах
     for guild in bot.guilds:
         print(f'Сервер: {guild.name} (ID: {guild.id})')
         if guild.id == 1003525677640851496:
             print(f'  → Основной сервер: {guild.name}')
             print(f'  → Админские роли: {len(TAG_ROLE_IDS)}')
+            print(f'  → Роли для slash-команд: {len(SLASH_COMMAND_ROLE_IDS)}')
     
     print('Бот готов к работе!')
 
@@ -785,14 +814,23 @@ async def on_error(event, *args, **kwargs):
     print(f'Ошибка в событии {event}:')
     traceback.print_exc()
 
-# ИЗМЕНЕНО: команда переименована с "заявка" на "заявко"
-@bot.command(name="заявко")
-async def create_application_panel(ctx):
-    """Создает панель для подачи заявки"""
+# ============ SLASH COMMANDS ============
+
+# Slash-команда для создания панели заявки
+@tree.command(
+    name="заявко",
+    description="Создает панель для подачи заявки в семью"
+)
+async def slash_create_application_panel(interaction: discord.Interaction):
+    """Slash-команда для создания панели заявки"""
     try:
         # Проверяем права пользователя
-        if not has_admin_permission(ctx.author) and not ctx.author.guild_permissions.administrator:
-            await ctx.send("❌ У вас нет прав для выполнения этой команды.")
+        if not has_slash_command_permission(interaction):
+            await interaction.response.send_message(
+                "❌ У вас нет прав для выполнения этой команды.\n"
+                "Требуется одна из ролей: <@&1310673963000528949> или <@&1381685630555258931>",
+                ephemeral=True
+            )
             return
         
         # Создаем Embed с обновленным дизайном
@@ -828,18 +866,31 @@ async def create_application_panel(ctx):
             async def apply_button_callback(self, interaction: discord.Interaction, button: discord.ui.Button):
                 await interaction.response.send_modal(ApplicationForm())
         
-        await ctx.send(embed=embed, view=ApplicationButtonView())
+        await interaction.response.send_message(embed=embed, view=ApplicationButtonView())
         bot.add_view(ApplicationButtonView())
         
     except Exception as e:
         print(f"Ошибка команды заявка: {e}")
         traceback.print_exc()
-        await ctx.send("❌ Произошла ошибка при создании панели.")
+        await interaction.response.send_message("❌ Произошла ошибка при создании панели.", ephemeral=True)
 
-@bot.command(name="заявки")
-async def applications_list(ctx):
-    """Показать все заявки"""
+# Slash-команда для просмотра заявок
+@tree.command(
+    name="заявки",
+    description="Показать все заявки"
+)
+async def slash_applications_list(interaction: discord.Interaction):
+    """Slash-команда для просмотра заявок"""
     try:
+        # Проверяем права пользователя
+        if not has_slash_command_permission(interaction):
+            await interaction.response.send_message(
+                "❌ У вас нет прав для выполнения этой команды.\n"
+                "Требуется одна из ролей: <@&1310673963000528949> или <@&1381685630555258931>",
+                ephemeral=True
+            )
+            return
+        
         pending_apps = await get_pending_applications()
         all_apps = await load_applications()
         
@@ -863,26 +914,36 @@ async def applications_list(ctx):
                 apps_text += f"• **{app.username_static}** - {channel_info}\n"
             embed.add_field(name="Последние заявки:", value=apps_text, inline=False)
         
-        await ctx.send(embed=embed)
+        await interaction.response.send_message(embed=embed)
     except Exception as e:
         print(f"Ошибка команды заявки: {e}")
         traceback.print_exc()
-        await ctx.send("❌ Произошла ошибка при получении списка заявок.")
+        await interaction.response.send_message("❌ Произошла ошибка при получении списка заявок.", ephemeral=True)
 
-@bot.command(name="очистка")
-async def cleanup_channels(ctx):
-    """Очистка старых каналов с заявками"""
+# Slash-команда для очистки каналов
+@tree.command(
+    name="очистка",
+    description="Очистка старых каналов с заявками"
+)
+async def slash_cleanup_channels(interaction: discord.Interaction):
+    """Slash-команда для очистки каналов"""
     try:
         # Проверяем права пользователя
-        if not has_admin_permission(ctx.author):
-            await ctx.send("❌ У вас нет прав для выполнения этой команды.")
+        if not has_slash_command_permission(interaction):
+            await interaction.response.send_message(
+                "❌ У вас нет прав для выполнения этой команды.\n"
+                "Требуется одна из ролей: <@&1310673963000528949> или <@&1381685630555258931>",
+                ephemeral=True
+            )
             return
         
+        await interaction.response.defer()
+        
         # Используем фиксированный ID категории
-        category = ctx.guild.get_channel(APPLICATIONS_CATEGORY_ID)
+        category = interaction.guild.get_channel(APPLICATIONS_CATEGORY_ID)
         
         if not category:
-            await ctx.send("Категория заявок не найдена.")
+            await interaction.followup.send("Категория заявок не найдена.")
             return
         
         deleted = 0
@@ -896,27 +957,47 @@ async def cleanup_channels(ctx):
                     except:
                         pass
         
-        await ctx.send(f"✅ Удалено {deleted} старых каналов с заявками.")
+        await interaction.followup.send(f"✅ Удалено {deleted} старых каналов с заявками.")
     except Exception as e:
         print(f"Ошибка команды очистка: {e}")
         traceback.print_exc()
-        await ctx.send("❌ Произошла ошибка при очистке каналов.")
+        await interaction.followup.send("❌ Произошла ошибка при очистке каналов.")
 
-@bot.command(name="статус")
-async def application_status(ctx, discord_id: str = None):
-    """Проверить статус заявки"""
+# Slash-команда для проверки статуса заявки
+@tree.command(
+    name="статус",
+    description="Проверить статус заявки пользователя"
+)
+@app_commands.describe(
+    пользователь="Пользователь для проверки (оставьте пустым для себя)"
+)
+async def slash_application_status(interaction: discord.Interaction, пользователь: discord.User = None):
+    """Slash-команда для проверки статуса заявки"""
     try:
-        if discord_id is None:
-            discord_id = str(ctx.author.id)
+        # Проверяем права пользователя
+        if not has_slash_command_permission(interaction):
+            await interaction.response.send_message(
+                "❌ У вас нет прав для выполнения этой команды.\n"
+                "Требуется одна из ролей: <@&1310673963000528949> или <@&1381685630555258931>",
+                ephemeral=True
+            )
+            return
+        
+        if пользователь is None:
+            discord_id = str(interaction.user.id)
+            user_mention = f"<@{discord_id}>"
+        else:
+            discord_id = str(пользователь.id)
+            user_mention = f"<@{discord_id}>"
         
         user_apps = await get_user_applications(discord_id)
         
         if not user_apps:
-            await ctx.send("Заявок не найдено.")
+            await interaction.response.send_message("Заявок не найдено.")
             return
         
         embed = discord.Embed(
-            title=f"Заявки пользователя <@{discord_id}>",
+            title=f"Заявки пользователя {user_mention}",
             color=discord.Color.blue(),
             timestamp=datetime.now()
         )
@@ -935,60 +1016,128 @@ async def application_status(ctx, discord_id: str = None):
                 app_info += f"**Причина отказа:** {app.reason_reject[:100]}...\n"
             
             if app.status == "approved" and app.moderator:
-                app_info += f"**Принял:** <@{next((m.id for m in ctx.guild.members if m.name == app.moderator), app.moderator)}>\n"
+                app_info += f"**Принял:** <@{next((m.id for m in interaction.guild.members if m.name == app.moderator), app.moderator)}>\n"
             
             app_info += f"**Дата:** {app.created_at.strftime('%d.%m.%Y %H:%M')}"
             
             embed.add_field(name=f"Заявка #{i}", value=app_info, inline=False)
         
-        await ctx.send(embed=embed)
+        await interaction.response.send_message(embed=embed)
     except Exception as e:
         print(f"Ошибка команды статус: {e}")
         traceback.print_exc()
-        await ctx.send("❌ Произошла ошибка при проверке статуса.")
+        await interaction.response.send_message("❌ Произошла ошибка при проверке статуса.", ephemeral=True)
 
-@bot.command(name="удалить_канал")
-async def delete_channel_manual(ctx, channel_id: str = None):
-    """Вручную удалить канал заявки"""
+# Slash-команда для удаления канала
+@tree.command(
+    name="удалить_канал",
+    description="Вручную удалить канал заявки"
+)
+@app_commands.describe(
+    канал="Канал для удаления (оставьте пустым для текущего канала)"
+)
+async def slash_delete_channel_manual(interaction: discord.Interaction, канал: discord.TextChannel = None):
+    """Slash-команда для удаления канала"""
     try:
         # Проверяем права пользователя
-        if not has_admin_permission(ctx.author):
-            await ctx.send("❌ У вас нет прав для выполнения этой команды.")
+        if not has_slash_command_permission(interaction):
+            await interaction.response.send_message(
+                "❌ У вас нет прав для выполнения этой команды.\n"
+                "Требуется одна из ролей: <@&1310673963000528949> или <@&1381685630555258931>",
+                ephemeral=True
+            )
             return
         
-        if channel_id is None:
+        if канал is None:
             # Проверяем, находится ли текущий канал в категории заявок
-            category = ctx.guild.get_channel(APPLICATIONS_CATEGORY_ID)
+            category = interaction.guild.get_channel(APPLICATIONS_CATEGORY_ID)
             
-            if category and ctx.channel.category_id == category.id:
-                channel = ctx.channel
+            if category and interaction.channel.category_id == category.id:
+                channel = interaction.channel
             else:
-                await ctx.send("❌ Укажите ID канала или выполните команду в канале заявки.")
+                await interaction.response.send_message(
+                    "❌ Укажите канал или выполните команду в канале заявки.",
+                    ephemeral=True
+                )
                 return
         else:
-            channel = ctx.guild.get_channel(int(channel_id))
-        
-        if not channel:
-            await ctx.send("❌ Канал не найден.")
-            return
+            channel = канал
         
         await channel.delete(reason="Ручное удаление администратором")
-        await ctx.send(f"✅ Канал {channel.name} удален.")
+        await interaction.response.send_message(f"✅ Канал {channel.name} удален.", ephemeral=True)
     except Exception as e:
         print(f"Ошибка команды удалить_канал: {e}")
         traceback.print_exc()
-        await ctx.send(f"❌ Ошибка при удалении канала: {str(e)}")
+        await interaction.response.send_message(f"❌ Ошибка при удалении канала: {str(e)}", ephemeral=True)
+
+# Slash-команда для теста
+@tree.command(
+    name="тест",
+    description="Тестовая команда для проверки работы бота"
+)
+async def slash_test_command(interaction: discord.Interaction):
+    """Slash-команда для теста"""
+    try:
+        # Проверяем права пользователя
+        if not has_slash_command_permission(interaction):
+            await interaction.response.send_message(
+                "❌ У вас нет прав для выполнения этой команды.\n"
+                "Требуется одна из ролей: <@&1310673963000528949> или <@&1381685630555258931>",
+                ephemeral=True
+            )
+            return
+        
+        await interaction.response.send_message(f"✅ Бот работает! Пинг: {round(bot.latency * 1000)}мс")
+    except Exception as e:
+        print(f"Ошибка команды тест: {e}")
+        traceback.print_exc()
+        await interaction.response.send_message("❌ Произошла ошибка при выполнении команды.", ephemeral=True)
+
+# ============ КОМАНДЫ С ПРЕФИКСОМ ! (ОСТАВЛЯЕМ ДЛЯ ОБРАТНОЙ СОВМЕСТИМОСТИ) ============
+
+@bot.command(name="заявко")
+@commands.has_any_role(*SLASH_COMMAND_ROLE_IDS)
+async def legacy_create_application_panel(ctx):
+    """Старая команда для создания панели заявки"""
+    await ctx.send("⚠️ Эта команда устарела. Пожалуйста, используйте slash-команду `/заявко`")
+
+@bot.command(name="заявки")
+@commands.has_any_role(*SLASH_COMMAND_ROLE_IDS)
+async def legacy_applications_list(ctx):
+    """Старая команда для просмотра заявок"""
+    await ctx.send("⚠️ Эта команда устарела. Пожалуйста, используйте slash-команду `/заявки`")
+
+@bot.command(name="очистка")
+@commands.has_any_role(*SLASH_COMMAND_ROLE_IDS)
+async def legacy_cleanup_channels(ctx):
+    """Старая команда для очистки каналов"""
+    await ctx.send("⚠️ Эта команда устарела. Пожалуйста, используйте slash-команду `/очистка`")
+
+@bot.command(name="статус")
+@commands.has_any_role(*SLASH_COMMAND_ROLE_IDS)
+async def legacy_application_status(ctx, discord_id: str = None):
+    """Старая команда для проверки статуса"""
+    await ctx.send("⚠️ Эта команда устарела. Пожалуйста, используйте slash-команду `/статус`")
+
+@bot.command(name="удалить_канал")
+@commands.has_any_role(*SLASH_COMMAND_ROLE_IDS)
+async def legacy_delete_channel_manual(ctx, channel_id: str = None):
+    """Старая команда для удаления канала"""
+    await ctx.send("⚠️ Эта команда устарела. Пожалуйста, используйте slash-команду `/удалить_канал`")
 
 @bot.command(name="тест")
-async def test_command(ctx):
-    """Тестовая команда для проверки работы бота"""
-    await ctx.send(f"✅ Бот работает! Пинг: {round(bot.latency * 1000)}мс")
+@commands.has_any_role(*SLASH_COMMAND_ROLE_IDS)
+async def legacy_test_command(ctx):
+    """Старая тестовая команда"""
+    await ctx.send("⚠️ Эта команда устарела. Пожалуйста, используйте slash-команду `/тест`")
 
 # Обработка ошибок команд
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandNotFound):
         return
+    elif isinstance(error, commands.MissingAnyRole):
+        await ctx.send("❌ У вас недостаточно прав для выполнения этой команды.")
     elif isinstance(error, commands.MissingPermissions):
         await ctx.send("❌ У вас недостаточно прав для выполнения этой команды.")
     else:
