@@ -36,7 +36,6 @@ APPLICATIONS_CATEGORY_ID = 1316900282340347934  # Категория для за
 
 # ID ролей для тега и административных прав
 TAG_ROLE_IDS = [
-    1381682246678741022,
     1381685630555258931,
     1381683377090068550
 ]
@@ -114,9 +113,9 @@ class Application:
             rollbacks=data["rollbacks"],
             discord_user=data["discord_user"],
             discord_id=data["discord_id"],
-            message_id=str(data.get("message_id")) if data.get("message_id") else None,  # Преобразуем
+            message_id=str(data.get("message_id")) if data.get("message_id") else None,
             status=data.get("status", "pending"),
-            channel_id=str(data.get("channel_id")) if data.get("channel_id") else None,  # Преобразуем
+            channel_id=str(data.get("channel_id")) if data.get("channel_id") else None,
             moderator=data.get("moderator"),
             reason_reject=data.get("reason_reject"),
             created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.now(),
@@ -966,45 +965,6 @@ async def slash_application_status(interaction: discord.Interaction, польз�
         await interaction.response.send_message("❌ Произошла ошибка при проверке статуса.", ephemeral=True)
 
 @bot.tree.command(
-    name="удалить_канал",
-    description="Вручную удалить канал заявки"
-)
-@app_commands.describe(
-    канал="Канал для удаления (оставьте пустым для текущего канала)"
-)
-async def slash_delete_channel_manual(interaction: discord.Interaction, канал: discord.TextChannel = None):
-    """Slash-команда для удаления канала"""
-    try:
-        if not has_slash_command_permission(interaction):
-            await interaction.response.send_message(
-                "❌ У вас нет прав для выполнения этой команды.\n"
-                "Требуется одна из ролей: <@&1310673963000528949> или <@&1381685630555258931>",
-                ephemeral=True
-            )
-            return
-        
-        if канал is None:
-            category = interaction.guild.get_channel(APPLICATIONS_CATEGORY_ID)
-            
-            if category and interaction.channel.category_id == category.id:
-                channel = interaction.channel
-            else:
-                await interaction.response.send_message(
-                    "❌ Укажите канал или выполните команду в канале заявки.",
-                    ephemeral=True
-                )
-                return
-        else:
-            channel = канал
-        
-        await channel.delete(reason="Ручное удаление администратором")
-        await interaction.response.send_message(f"✅ Канал {channel.name} удален.", ephemeral=True)
-    except Exception as e:
-        print(f"Ошибка команды удалить_канал: {e}")
-        traceback.print_exc()
-        await interaction.response.send_message(f"❌ Ошибка при удалении канала: {str(e)}", ephemeral=True)
-
-@bot.tree.command(
     name="тест",
     description="Тестовая команда для проверки работы бота"
 )
@@ -1050,12 +1010,6 @@ async def legacy_cleanup_channels(ctx):
 async def legacy_application_status(ctx, discord_id: str = None):
     """Старая команда для проверки статуса"""
     await ctx.send("⚠️ Эта команда устарела. Пожалуйста, используйте slash-команду `/статус`")
-
-@bot.command(name="удалить_канал")
-@commands.has_any_role(*SLASH_COMMAND_ROLE_IDS)
-async def legacy_delete_channel_manual(ctx, channel_id: str = None):
-    """Старая команда для удаления канала"""
-    await ctx.send("⚠️ Эта команда устарела. Пожалуйста, используйте slash-команду `/удалить_канал`")
 
 @bot.command(name="тест")
 @commands.has_any_role(*SLASH_COMMAND_ROLE_IDS)
