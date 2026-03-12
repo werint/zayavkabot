@@ -50,9 +50,6 @@ SMALL_ICON_URL = "https://cdn.discordapp.com/attachments/1381981605848944720/144
 # Глобальный пул подключений к БД
 db_pool = None
 
-# Хранилище для постоянных view (чтобы кнопки работали после редеплоя)
-persistent_views = {}
-
 # Функция проверки прав для slash-команд
 def has_slash_command_permission(interaction: discord.Interaction):
     """Проверяет, есть ли у пользователя права на использование slash-команд"""
@@ -413,7 +410,7 @@ async def delete_application_channel(channel, delay_seconds=5):
 # Класс для постоянных кнопок в канале заявки
 class ApplicationButtons(discord.ui.View):
     def __init__(self, application_id):
-        super().__init__(timeout=None)  # Без таймаута для постоянной работы
+        super().__init__(timeout=None)
         self.application_id = application_id
     
     @discord.ui.button(label="✅ Принять", style=discord.ButtonStyle.green, custom_id="approve_app", row=0)
@@ -422,7 +419,6 @@ class ApplicationButtons(discord.ui.View):
             await interaction.response.send_message("❌ У вас нет прав для этого действия", ephemeral=True)
             return
         
-        # Получаем заявку из БД
         application = await get_application_by_id(self.application_id)
         if not application:
             await interaction.response.send_message("❌ Заявка не найдена в базе данных", ephemeral=True)
@@ -437,20 +433,16 @@ class ApplicationButtons(discord.ui.View):
         application.updated_at = datetime.now()
         await save_application(application)
         
-        # Отправляем уведомление пользователю
-        try:
-            user = await bot.fetch_user(int(application.discord_id))
-            await user.send("🎉 **Вы приняты в семью!** 🎉\n\nДобро пожаловать! Ожидайте дальнейших инструкций от администрации.")
-        except Exception as e:
-            print(f"Не удалось отправить сообщение пользователю: {e}")
-        
         # Отправляем лог
         await send_log_to_channel(application, interaction.user, "approved", guild=interaction.guild)
         
-        # Отключаем кнопки
-        for child in self.children:
-            child.disabled = True
-        await interaction.message.edit(view=self)
+        # Отключаем кнопки (только если сообщение существует)
+        try:
+            for child in self.children:
+                child.disabled = True
+            await interaction.message.edit(view=self)
+        except:
+            pass
         
         await interaction.response.send_message("✅ Заявка принята!", ephemeral=True)
         
@@ -466,7 +458,6 @@ class ApplicationButtons(discord.ui.View):
             await interaction.response.send_message("❌ У вас нет прав для этого действия", ephemeral=True)
             return
         
-        # Получаем заявку из БД
         application = await get_application_by_id(self.application_id)
         if not application:
             await interaction.response.send_message("❌ Заявка не найдена в базе данных", ephemeral=True)
@@ -476,8 +467,7 @@ class ApplicationButtons(discord.ui.View):
             await interaction.response.send_message(f"❌ Эта заявка уже {application.status}", ephemeral=True)
             return
         
-        # Создаем модальное окно для причины отказа
-        modal = RejectReasonModal(application, self)
+        modal = RejectReasonModal(application, self, interaction.message)
         await interaction.response.send_modal(modal)
     
     @discord.ui.button(label="📝 Взять на рассмотрение", style=discord.ButtonStyle.blurple, custom_id="consider_app", row=0)
@@ -488,7 +478,6 @@ class ApplicationButtons(discord.ui.View):
         
         await interaction.response.defer()
         
-        # Получаем заявку из БД
         application = await get_application_by_id(self.application_id)
         if not application:
             await interaction.followup.send("❌ Заявка не найдена в базе данных", ephemeral=True)
@@ -504,10 +493,11 @@ class ApplicationButtons(discord.ui.View):
 
 # Модальное окно для причины отказа
 class RejectReasonModal(discord.ui.Modal, title="Причина отказа"):
-    def __init__(self, application, view):
+    def __init__(self, application, view, message):
         super().__init__()
         self.application = application
         self.view = view
+        self.message = message
     
     reason = discord.ui.TextInput(
         label="Причина отказа",
@@ -526,20 +516,16 @@ class RejectReasonModal(discord.ui.Modal, title="Причина отказа"):
         self.application.updated_at = datetime.now()
         await save_application(self.application)
         
-        # Отправляем уведомление пользователю
-        try:
-            user = await bot.fetch_user(int(self.application.discord_id))
-            await user.send(f"❌ **Ваша заявка отклонена.**\n\n**Причина:** {self.reason.value}\n\nВы можете подать заявку снова после устранения указанных замечаний.")
-        except Exception as e:
-            print(f"Не удалось отправить сообщение пользователю: {e}")
-        
         # Отправляем лог
         await send_log_to_channel(self.application, interaction.user, "rejected", self.reason.value, guild=interaction.guild)
         
-        # Отключаем кнопки
-        for child in self.view.children:
-            child.disabled = True
-        await interaction.message.edit(view=self.view)
+        # Отключаем кнопки (только если сообщение существует)
+        try:
+            for child in self.view.children:
+                child.disabled = True
+            await self.message.edit(view=self.view)
+        except:
+            pass
         
         await interaction.followup.send("✅ Заявка отклонена!", ephemeral=True)
         
@@ -556,9 +542,9 @@ class RejectReasonModal(discord.ui.Modal, title="Причина отказа"):
 
 # Класс для выбора заявки в команде /активзаявки
 class ApplicationSelect(discord.ui.Select):
-    def __init__(self, applications, placeholder="Выберите заявку для обработки"):
+    def __init__(self, applications):
         options = []
-        for app in applications[:25]:  # Максимум 25 опций
+        for app in applications[:25]:
             created = app.created_at.strftime("%d.%m %H:%M")
             label = f"{app.username_static[:50]}"
             description = f"ID: {app.id} | {created}"
@@ -572,7 +558,7 @@ class ApplicationSelect(discord.ui.Select):
             )
         
         super().__init__(
-            placeholder=placeholder,
+            placeholder="Выберите заявку для обработки",
             min_values=1,
             max_values=1,
             options=options,
@@ -591,7 +577,6 @@ class ApplicationSelect(discord.ui.Select):
             await interaction.response.send_message(f"❌ Эта заявка уже {application.status}", ephemeral=True)
             return
         
-        # Создаем embed с информацией о заявке
         embed = discord.Embed(
             title=f"Заявка #{application.id}",
             color=discord.Color.blue(),
@@ -617,7 +602,6 @@ class ApplicationSelect(discord.ui.Select):
         else:
             embed.add_field(name="Канал", value="Удален", inline=True)
         
-        # Создаем кнопки для обработки
         view = ApplicationButtons(app_id)
         
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
@@ -625,7 +609,7 @@ class ApplicationSelect(discord.ui.Select):
 # View для выбора заявки
 class ApplicationSelectView(discord.ui.View):
     def __init__(self, applications):
-        super().__init__(timeout=300)  # 5 минут таймаут
+        super().__init__(timeout=300)
         self.add_item(ApplicationSelect(applications))
 
 async def send_application_embed(channel, application, interaction_user, guild):
@@ -708,7 +692,6 @@ async def send_application_embed(channel, application, interaction_user, guild):
         
         message = await channel.send(embed=embed)
         
-        # Создаем постоянные кнопки с ID заявки
         view = ApplicationButtons(application.id)
         
         await channel.send(view=view)
@@ -828,7 +811,6 @@ class ApplicationForm(discord.ui.Modal, title='Подача заявки в се
                 discord_id=str(interaction.user.id)
             )
             
-            # Сначала сохраняем в БД, чтобы получить ID
             await save_application(application)
             
             channel = await create_application_channel(interaction.guild, interaction.user.name, interaction.user.id, application)
@@ -840,7 +822,6 @@ class ApplicationForm(discord.ui.Modal, title='Подача заявки в се
                 f"✅ Ваша заявка успешно отправлена!\n\n"
                 f"Номер заявки: #{application.id}\n"
                 f"Заявка рассматривается в течение суток.\n"
-                f"Ответ придёт в личные сообщения от бота.\n"
                 f"Для обсуждения заявки создан канал: <#{application.channel_id}>",
                 ephemeral=True
             )
@@ -881,7 +862,7 @@ async def on_ready():
         print(f"❌ Ошибка синхронизации slash-команд: {e}")
     
     # Добавляем постоянные view для кнопок
-    bot.add_view(ApplicationButtons(0))  # 0 - заглушка, ID будет подставляться динамически
+    bot.add_view(ApplicationButtons(0))
     
     for guild in bot.guilds:
         print(f'Сервер: {guild.name} (ID: {guild.id})')
@@ -904,7 +885,6 @@ async def on_error(event, *args, **kwargs):
     description="Создает панель для подачи заявки в семью"
 )
 async def slash_create_application_panel(interaction: discord.Interaction):
-    """Slash-команда для создания панели заявки"""
     try:
         if not has_slash_command_permission(interaction):
             await interaction.response.send_message(
@@ -957,7 +937,6 @@ async def slash_create_application_panel(interaction: discord.Interaction):
     description="Показать все заявки"
 )
 async def slash_applications_list(interaction: discord.Interaction):
-    """Slash-команда для просмотра заявок"""
     try:
         if not has_slash_command_permission(interaction):
             await interaction.response.send_message(
@@ -1001,7 +980,6 @@ async def slash_applications_list(interaction: discord.Interaction):
     description="Выбрать активную заявку для обработки"
 )
 async def slash_active_applications(interaction: discord.Interaction):
-    """Slash-команда для выбора активной заявки"""
     try:
         if not has_slash_command_permission(interaction):
             await interaction.response.send_message(
@@ -1024,7 +1002,6 @@ async def slash_active_applications(interaction: discord.Interaction):
             timestamp=datetime.now()
         )
         
-        # Показываем краткий список
         apps_list = ""
         for app in pending_apps[:10]:
             created = app.created_at.strftime("%d.%m %H:%M")
@@ -1036,7 +1013,6 @@ async def slash_active_applications(interaction: discord.Interaction):
         
         embed.add_field(name="Доступные заявки", value=apps_list, inline=False)
         
-        # Создаем выпадающий список
         view = ApplicationSelectView(pending_apps)
         
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
@@ -1051,7 +1027,6 @@ async def slash_active_applications(interaction: discord.Interaction):
     description="Очистка старых каналов с заявками"
 )
 async def slash_cleanup_channels(interaction: discord.Interaction):
-    """Slash-команда для очистки каналов"""
     try:
         if not has_slash_command_permission(interaction):
             await interaction.response.send_message(
@@ -1094,7 +1069,6 @@ async def slash_cleanup_channels(interaction: discord.Interaction):
     пользователь="Пользователь для проверки (оставьте пустым для себя)"
 )
 async def slash_application_status(interaction: discord.Interaction, пользователь: discord.User = None):
-    """Slash-команда для проверки статуса заявки"""
     try:
         if not has_slash_command_permission(interaction):
             await interaction.response.send_message(
@@ -1154,7 +1128,6 @@ async def slash_application_status(interaction: discord.Interaction, польз�
     description="Тестовая команда для проверки работы бота"
 )
 async def slash_test_command(interaction: discord.Interaction):
-    """Slash-команда для теста"""
     try:
         if not has_slash_command_permission(interaction):
             await interaction.response.send_message(
@@ -1175,34 +1148,28 @@ async def slash_test_command(interaction: discord.Interaction):
 @bot.command(name="заявко")
 @commands.has_any_role(*SLASH_COMMAND_ROLE_IDS)
 async def legacy_create_application_panel(ctx):
-    """Старая команда для создания панели заявки"""
     await ctx.send("⚠️ Эта команда устарела. Пожалуйста, используйте slash-команду `/заявко`")
 
 @bot.command(name="заявки")
 @commands.has_any_role(*SLASH_COMMAND_ROLE_IDS)
 async def legacy_applications_list(ctx):
-    """Старая команда для просмотра заявок"""
     await ctx.send("⚠️ Эта команда устарела. Пожалуйста, используйте slash-команду `/заявки`")
 
 @bot.command(name="очистка")
 @commands.has_any_role(*SLASH_COMMAND_ROLE_IDS)
 async def legacy_cleanup_channels(ctx):
-    """Старая команда для очистки каналов"""
     await ctx.send("⚠️ Эта команда устарела. Пожалуйста, используйте slash-команду `/очистка`")
 
 @bot.command(name="статус")
 @commands.has_any_role(*SLASH_COMMAND_ROLE_IDS)
 async def legacy_application_status(ctx, discord_id: str = None):
-    """Старая команда для проверки статуса"""
     await ctx.send("⚠️ Эта команда устарела. Пожалуйста, используйте slash-команду `/статус`")
 
 @bot.command(name="тест")
 @commands.has_any_role(*SLASH_COMMAND_ROLE_IDS)
 async def legacy_test_command(ctx):
-    """Старая тестовая команда"""
     await ctx.send("⚠️ Эта команда устарела. Пожалуйста, используйте slash-команду `/тест`")
 
-# Обработка ошибок команд
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandNotFound):
