@@ -433,6 +433,13 @@ class ApplicationButtons(discord.ui.View):
         application.updated_at = datetime.now()
         await save_application(application)
         
+        # Отправляем уведомление пользователю в ЛС
+        try:
+            user = await bot.fetch_user(int(application.discord_id))
+            await user.send("🎉 **Вы приняты в семью!** 🎉\n\nДобро пожаловать! Ожидайте дальнейших инструкций от администрации.")
+        except Exception as e:
+            print(f"Не удалось отправить сообщение пользователю: {e}")
+        
         # Отправляем лог
         await send_log_to_channel(application, interaction.user, "approved", guild=interaction.guild)
         
@@ -446,10 +453,11 @@ class ApplicationButtons(discord.ui.View):
         
         await interaction.response.send_message("✅ Заявка принята!", ephemeral=True)
         
-        # Удаляем канал, если он еще существует
+        # Отправляем сообщение в канал, если он существует
         if application.channel_id:
             channel = interaction.guild.get_channel(int(application.channel_id))
             if channel:
+                await channel.send(f"**Заявка принята рекрутом <@{interaction.user.id}>**")
                 bot.loop.create_task(delete_application_channel(channel))
     
     @discord.ui.button(label="❌ Отклонить", style=discord.ButtonStyle.red, custom_id="reject_app", row=0)
@@ -516,6 +524,13 @@ class RejectReasonModal(discord.ui.Modal, title="Причина отказа"):
         self.application.updated_at = datetime.now()
         await save_application(self.application)
         
+        # Отправляем уведомление пользователю в ЛС
+        try:
+            user = await bot.fetch_user(int(self.application.discord_id))
+            await user.send(f"❌ **Ваша заявка отклонена.**\n\n**Причина:** {self.reason.value}\n\nВы можете подать заявку снова после устранения указанных замечаний.")
+        except Exception as e:
+            print(f"Не удалось отправить сообщение пользователю: {e}")
+        
         # Отправляем лог
         await send_log_to_channel(self.application, interaction.user, "rejected", self.reason.value, guild=interaction.guild)
         
@@ -529,10 +544,11 @@ class RejectReasonModal(discord.ui.Modal, title="Причина отказа"):
         
         await interaction.followup.send("✅ Заявка отклонена!", ephemeral=True)
         
-        # Удаляем канал, если он еще существует
+        # Отправляем сообщение в канал и удаляем его, если он существует
         if self.application.channel_id:
             channel = interaction.guild.get_channel(int(self.application.channel_id))
             if channel:
+                await channel.send(f"**Заявка отклонена рекрутом <@{interaction.user.id}>**\n**Причина:** {self.reason.value}")
                 bot.loop.create_task(delete_application_channel(channel))
     
     async def on_error(self, interaction: discord.Interaction, error: Exception):
@@ -822,6 +838,7 @@ class ApplicationForm(discord.ui.Modal, title='Подача заявки в се
                 f"✅ Ваша заявка успешно отправлена!\n\n"
                 f"Номер заявки: #{application.id}\n"
                 f"Заявка рассматривается в течение суток.\n"
+                f"Ответ придёт в личные сообщения от бота.\n"
                 f"Для обсуждения заявки создан канал: <#{application.channel_id}>",
                 ephemeral=True
             )
