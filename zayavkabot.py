@@ -419,13 +419,16 @@ class ApplicationButtons(discord.ui.View):
             await interaction.response.send_message("❌ У вас нет прав для этого действия", ephemeral=True)
             return
         
+        # Сразу подтверждаем получение взаимодействия
+        await interaction.response.defer(ephemeral=True)
+        
         application = await get_application_by_id(self.application_id)
         if not application:
-            await interaction.response.send_message("❌ Заявка не найдена в базе данных", ephemeral=True)
+            await interaction.followup.send("❌ Заявка не найдена в базе данных", ephemeral=True)
             return
         
         if application.status != "pending":
-            await interaction.response.send_message(f"❌ Эта заявка уже {application.status}", ephemeral=True)
+            await interaction.followup.send(f"❌ Эта заявка уже {application.status}", ephemeral=True)
             return
         
         application.status = "approved"
@@ -451,9 +454,10 @@ class ApplicationButtons(discord.ui.View):
         except:
             pass
         
-        await interaction.response.send_message("✅ Заявка принята!", ephemeral=True)
+        # Отправляем финальное сообщение через followup
+        await interaction.followup.send("✅ Заявка принята!", ephemeral=True)
         
-        # Отправляем сообщение в канал, если он существует
+        # Отправляем сообщение в канал и удаляем его, если он существует
         if application.channel_id:
             channel = interaction.guild.get_channel(int(application.channel_id))
             if channel:
@@ -475,6 +479,7 @@ class ApplicationButtons(discord.ui.View):
             await interaction.response.send_message(f"❌ Эта заявка уже {application.status}", ephemeral=True)
             return
         
+        # Создаем модальное окно
         modal = RejectReasonModal(application, self, interaction.message)
         await interaction.response.send_modal(modal)
     
@@ -484,7 +489,8 @@ class ApplicationButtons(discord.ui.View):
             await interaction.response.send_message("❌ У вас нет прав для этого действия", ephemeral=True)
             return
         
-        await interaction.response.defer()
+        # Сразу подтверждаем получение взаимодействия
+        await interaction.response.defer(ephemeral=True)
         
         application = await get_application_by_id(self.application_id)
         if not application:
@@ -516,6 +522,7 @@ class RejectReasonModal(discord.ui.Modal, title="Причина отказа"):
     )
     
     async def on_submit(self, interaction: discord.Interaction):
+        # Сразу подтверждаем получение взаимодействия
         await interaction.response.defer(ephemeral=True)
         
         self.application.status = "rejected"
@@ -542,6 +549,7 @@ class RejectReasonModal(discord.ui.Modal, title="Причина отказа"):
         except:
             pass
         
+        # Отправляем финальное сообщение через followup
         await interaction.followup.send("✅ Заявка отклонена!", ephemeral=True)
         
         # Отправляем сообщение в канал и удаляем его, если он существует
@@ -554,7 +562,10 @@ class RejectReasonModal(discord.ui.Modal, title="Причина отказа"):
     async def on_error(self, interaction: discord.Interaction, error: Exception):
         print(f"Ошибка в модальном окне отказа: {error}")
         traceback.print_exc()
-        await interaction.followup.send("❌ Произошла ошибка при отклонении заявки", ephemeral=True)
+        try:
+            await interaction.followup.send("❌ Произошла ошибка при отклонении заявки", ephemeral=True)
+        except:
+            pass
 
 # Класс для выбора заявки в команде /активзаявки
 class ApplicationSelect(discord.ui.Select):
