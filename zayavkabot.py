@@ -1059,7 +1059,7 @@ async def slash_create_application_panel(interaction: discord.Interaction):
             
             @discord.ui.button(
                 label="Подать заявку",
-                emoji="<:icons848:1449967782308614244>",
+                emoji="<:AMNYAMOV_FINISH:1382285909449244774>",
                 style=discord.ButtonStyle.gray,
                 custom_id="apply_button_amnyamov",
                 row=0
