@@ -1043,7 +1043,7 @@ async def slash_create_application_panel(interaction: discord.Interaction):
             name="**<a:wave:1449952532129517570> Путь в семью начинается здесь!**\n\u200b",
             value=(
                 "**<:outputonlinepngtools:1449964820999700721> После заполнения анкеты Вам придет оповещение в ЛС от бота с результатом (ответ не придёт, если закрыт доступ к сообщениям в discord) **\n\n"
-                "**🎭 Для RP заявки используйте кнопку \"Заявка в RP\" (без истории семей и откатов)**\n\n"
+                "**💗 Для RP заявки используйте кнопку \"Заявка в RP\" \n\n"
                 "-# Заявка рассматривается в течении суток. САЙГИ НЕОБЯЗАТЕЛЬНЫ."
             ),
             inline=False
@@ -1059,7 +1059,7 @@ async def slash_create_application_panel(interaction: discord.Interaction):
             
             @discord.ui.button(
                 label="Подать заявку",
-                emoji="<:AMNYAMOV_FINISH:1382285909449244774>",
+                emoji="<:icons848:1449967782308614244>",
                 style=discord.ButtonStyle.gray,
                 custom_id="apply_button_amnyamov",
                 row=0
@@ -1069,7 +1069,7 @@ async def slash_create_application_panel(interaction: discord.Interaction):
             
             @discord.ui.button(
                 label="Заявка в RP",
-                emoji="🎭",
+                emoji="<:AMNYAMOV_FINISH:1382285909449244774>",
                 style=discord.ButtonStyle.gray,
                 custom_id="rp_apply_button_amnyamov",
                 row=0
