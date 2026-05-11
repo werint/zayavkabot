@@ -666,12 +666,24 @@ async def send_application_embed(channel, application, interaction_user, guild):
         
         embed.add_field(name="Никнейм Статик", value=f"```{application.username_static}```", inline=False)
         embed.add_field(name="OOC имя возраст", value=f"```{application.ooc_info}```", inline=False)
-        embed.add_field(name="История семей", value=f"```{application.fam_history}```", inline=False)
+        
+        # Показываем историю семей только если она не пустая
+        if application.fam_history and application.fam_history.strip():
+            embed.add_field(name="История семей", value=f"```{application.fam_history}```", inline=False)
+        
         embed.add_field(name="Почему выбрали именно нас?", value=f"```{application.reason}```", inline=False)
-        embed.add_field(name="Откаты с ГГ", value=f"{rollbacks_text}", inline=False)
+        
+        # Показываем откаты только если они не пустые
+        if application.rollbacks and application.rollbacks.strip() and application.rollbacks != "Не указано":
+            embed.add_field(name="Откаты с ГГ", value=f"{rollbacks_text}", inline=False)
+        
         embed.add_field(name="Пользователь", value=f"<@{application.discord_id}>", inline=False)
         embed.add_field(name="Username", value=f"```{application.discord_user}```", inline=True)
         embed.add_field(name="ID", value=f"```{application.discord_id}```", inline=True)
+        
+        # Добавляем пометку о типе заявки
+        if not application.fam_history or not application.fam_history.strip():
+            embed.add_field(name="Тип заявки", value="```RP заявка```", inline=False)
         
         user_previous_apps = await get_user_applications(application.discord_id)
         user_previous_apps = [app for app in user_previous_apps if app.status != "pending" and app.id != application.id]
@@ -747,12 +759,14 @@ async def send_log_to_channel(application, moderator, action, reason=None, guild
         
         embed.add_field(name="Никнейм Статик", value=application.username_static, inline=False)
         embed.add_field(name="OOC имя возраст", value=application.ooc_info, inline=False)
-        embed.add_field(name="История семей", value=application.fam_history[:500] + "..." if len(application.fam_history) > 500 else application.fam_history, inline=False)
+        
+        if application.fam_history and application.fam_history.strip():
+            embed.add_field(name="История семей", value=application.fam_history[:500] + "..." if len(application.fam_history) > 500 else application.fam_history, inline=False)
         
         if application.reason:
             embed.add_field(name="Причина выбора", value=application.reason[:500] + "..." if len(application.reason) > 500 else application.reason, inline=False)
         
-        if application.rollbacks and application.rollbacks != "Не указано":
+        if application.rollbacks and application.rollbacks.strip() and application.rollbacks != "Не указано":
             rollbacks_text = application.rollbacks
             if rollbacks_text.startswith("```") and rollbacks_text.endswith("```"):
                 rollbacks_text = rollbacks_text[3:-3].strip()
@@ -761,6 +775,10 @@ async def send_log_to_channel(application, moderator, action, reason=None, guild
         embed.add_field(name="Пользователь", value=f"<@{application.discord_id}>", inline=False)
         embed.add_field(name="Username", value=application.discord_user, inline=True)
         embed.add_field(name="ID", value=application.discord_id, inline=True)
+        
+        # Добавляем пометку о типе заявки
+        if not application.fam_history or not application.fam_history.strip():
+            embed.add_field(name="Тип заявки", value="RP заявка", inline=False)
         
         if action == "approved":
             embed.add_field(name="Принял", value=f"<@{moderator.id}>", inline=False)
@@ -876,6 +894,100 @@ class ApplicationForm(discord.ui.Modal, title='Подача заявки в се
         except:
             pass
 
+# ================== НОВЫЙ КЛАСС ДЛЯ RP ЗАЯВКИ ==================
+class RPApplicationForm(discord.ui.Modal, title='Подача RP заявки'):
+    """Упрощенная форма для RP заявки (без истории семей и откатов)"""
+    
+    nickname_static = discord.ui.TextInput(
+        label='Никнейм и Статик',
+        placeholder='Например: Skeet Nyam',
+        max_length=100,
+        required=True
+    )
+    
+    ooc_info = discord.ui.TextInput(
+        label='OOC имя и возраст',
+        placeholder='Например: Серега 20',
+        max_length=100,
+        required=True
+    )
+    
+    reason = discord.ui.TextInput(
+        label='Почему выбрали именно нас?',
+        placeholder='Например: нравится атмосфера и контент',
+        style=discord.TextStyle.paragraph,
+        max_length=1000,
+        required=True
+    )
+    
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            # Проверяем наличие активных заявок
+            user_active_apps = await get_user_applications(str(interaction.user.id))
+            user_active_apps = [app for app in user_active_apps if app.status == "pending"]
+            
+            if user_active_apps:
+                await interaction.response.send_message(
+                    "❌ У вас уже есть активная заявка на рассмотрении!\n"
+                    "Вы не можете подать новую заявку, пока предыдущая не будет обработана.",
+                    ephemeral=True
+                )
+                return
+            
+            await interaction.response.defer(ephemeral=True)
+            
+            # Создаем заявку с пустыми полями для fam_history и rollbacks
+            application = Application(
+                username_static=self.nickname_static.value.strip(),
+                ooc_info=self.ooc_info.value.strip(),
+                fam_history="",  # Пустое поле для RP заявки
+                reason=self.reason.value,
+                rollbacks="",  # Пустое поле для RP заявки
+                discord_user=interaction.user.name,
+                discord_id=str(interaction.user.id)
+            )
+            
+            await save_application(application)
+            
+            # Создаем канал
+            channel = await create_application_channel(interaction.guild, interaction.user.name, interaction.user.id, application)
+            application.channel_id = channel.id
+            await save_application(application)
+            
+            # Отправляем embed с пометкой что это RP заявка
+            await send_application_embed(channel, application, interaction.user, interaction.guild)
+            
+            await interaction.followup.send(
+                f"✅ Ваша RP-заявка успешно отправлена!\n\n"
+                f"Номер заявки: #{application.id}\n"
+                f"Заявка рассматривается в течение суток.\n"
+                f"Ответ придёт в личные сообщения от бота.\n"
+                f"Для обсуждения заявки создан канал: <#{application.channel_id}>",
+                ephemeral=True
+            )
+            
+        except Exception as e:
+            print(f"Ошибка при создании RP заявки: {e}")
+            traceback.print_exc()
+            try:
+                await interaction.followup.send(
+                    "❌ Ошибка при создании RP заявки. Пожалуйста, попробуйте позже.", 
+                    ephemeral=True
+                )
+            except:
+                pass
+    
+    async def on_error(self, interaction: discord.Interaction, error: Exception):
+        print(f"Ошибка в форме RP заявки: {error}")
+        traceback.print_exc()
+        try:
+            await interaction.followup.send(
+                '❌ Произошла ошибка при отправке RP заявки. Пожалуйста, попробуйте позже.', 
+                ephemeral=True
+            )
+        except:
+            pass
+
 @bot.event
 async def on_ready():
     print(f'✅ {bot.user} запущен!')
@@ -931,6 +1043,7 @@ async def slash_create_application_panel(interaction: discord.Interaction):
             name="**<a:wave:1449952532129517570> Путь в семью начинается здесь!**\n\u200b",
             value=(
                 "**<:outputonlinepngtools:1449964820999700721> После заполнения анкеты Вам придет оповещение в ЛС от бота с результатом (ответ не придёт, если закрыт доступ к сообщениям в discord) **\n\n"
+                "**🎭 Для RP заявки используйте кнопку \"Заявка в RP\" (без истории семей и откатов)**\n\n"
                 "-# Заявка рассматривается в течении суток. САЙГИ НЕОБЯЗАТЕЛЬНЫ."
             ),
             inline=False
@@ -939,6 +1052,7 @@ async def slash_create_application_panel(interaction: discord.Interaction):
         embed.set_image(url=IMAGE_URL)
         embed.set_footer(text="Amnyamov famq", icon_url=SMALL_ICON_URL)
         
+        # Класс с двумя кнопками
         class ApplicationButtonView(discord.ui.View):
             def __init__(self):
                 super().__init__(timeout=None)
@@ -952,6 +1066,16 @@ async def slash_create_application_panel(interaction: discord.Interaction):
             )
             async def apply_button_callback(self, interaction: discord.Interaction, button: discord.ui.Button):
                 await interaction.response.send_modal(ApplicationForm())
+            
+            @discord.ui.button(
+                label="Заявка в RP",
+                emoji="🎭",
+                style=discord.ButtonStyle.gray,
+                custom_id="rp_apply_button_amnyamov",
+                row=0
+            )
+            async def rp_apply_button_callback(self, interaction: discord.Interaction, button: discord.ui.Button):
+                await interaction.response.send_modal(RPApplicationForm())
         
         await interaction.response.send_message(embed=embed, view=ApplicationButtonView())
         
@@ -994,7 +1118,9 @@ async def slash_applications_list(interaction: discord.Interaction):
             apps_text = ""
             for app in pending_apps[:5]:
                 channel_info = f"<#{app.channel_id}>" if app.channel_id else "Канал удален"
-                apps_text += f"• #{app.id} **{app.username_static}** - {channel_info}\n"
+                # Показываем тип заявки
+                app_type = "🎭 RP" if not app.fam_history or not app.fam_history.strip() else "📝 Обычная"
+                apps_text += f"• #{app.id} {app_type} **{app.username_static}** - {channel_info}\n"
             embed.add_field(name="Последние заявки:", value=apps_text, inline=False)
         
         await interaction.response.send_message(embed=embed)
@@ -1034,7 +1160,8 @@ async def slash_active_applications(interaction: discord.Interaction):
         for app in pending_apps[:10]:
             created = app.created_at.strftime("%d.%m %H:%M")
             channel_status = "✅ Канал активен" if app.channel_id else "❌ Канал удален"
-            apps_list += f"• #{app.id} **{app.username_static}** - {created} ({channel_status})\n"
+            app_type = "🎭 RP" if not app.fam_history or not app.fam_history.strip() else "📝 Обычная"
+            apps_list += f"• #{app.id} {app_type} **{app.username_static}** - {created} ({channel_status})\n"
         
         if len(pending_apps) > 10:
             apps_list += f"\n*... и еще {len(pending_apps) - 10} заявок*"
@@ -1129,7 +1256,10 @@ async def slash_application_status(interaction: discord.Interaction, польз�
             status_emoji = "⏳" if app.status == "pending" else "✅" if app.status == "approved" else "❌"
             status_text = "На рассмотрении" if app.status == "pending" else "Принята" if app.status == "approved" else "Отклонена"
             
+            app_type = "🎭 RP заявка" if not app.fam_history or not app.fam_history.strip() else "📝 Обычная заявка"
+            
             app_info = f"**Статус:** {status_emoji} {status_text}\n"
+            app_info += f"**Тип:** {app_type}\n"
             app_info += f"**Никнейм и статик:** {app.username_static}\n"
             
             if app.channel_id:
@@ -1139,7 +1269,7 @@ async def slash_application_status(interaction: discord.Interaction, польз�
                 app_info += f"**Причина отказа:** {app.reason_reject[:100]}...\n"
             
             if app.status == "approved" and app.moderator:
-                app_info += f"**Принял:** <@{next((m.id for m in interaction.guild.members if m.name == app.moderator), app.moderator)}>\n"
+                app_info += f"**Принял:** {app.moderator}\n"
             
             app_info += f"**Дата:** {app.created_at.strftime('%d.%m.%Y %H:%M')}"
             
