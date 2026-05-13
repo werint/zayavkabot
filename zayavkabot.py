@@ -1065,7 +1065,7 @@ async def slash_create_application_panel(interaction: discord.Interaction):
                 super().__init__(timeout=None)
             
             @discord.ui.button(
-                label="Подать заявку",
+                label="Заявка в Academy",
                 emoji="<:icons848:1449967782308614244>",
                 style=discord.ButtonStyle.gray,
                 custom_id="apply_button_amnyamov",
