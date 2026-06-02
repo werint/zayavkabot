@@ -899,8 +899,8 @@ class RPApplicationForm(discord.ui.Modal, title='Подача RP заявки'):
     """Упрощенная форма для RP заявки (без истории семей и откатов)"""
     
     nickname_static = discord.ui.TextInput(
-        label='Никнейм и Статик',
-        placeholder='Например: Skeet Nyam',
+        label='Никнейм, Статик, Средний онлайн',
+        placeholder='Например: Skeet Nyam, 2253, 6ч',
         max_length=100,
         required=True
     )
