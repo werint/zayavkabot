@@ -45,7 +45,7 @@ TAG_ROLE_IDS = [
 SLASH_COMMAND_ROLE_IDS = [1310673963000528949, 1381685630555258931]
 
 # URL изображений для заявки
-IMAGE_URL = "https://media.discordapp.net/attachments/1189879069991510066/1449528629775302698/zastavki-gas-kvas-com-n1e0-p-zastavki-na-telefon-am-nyam-2.png?ex=694285fc&is=6941347c&hm=560b40c38fbc83ae9821b60df73fadefb0d917eb0082f53635350b686b33b605&=&format=webp&quality=lossless"
+IMAGE_URL = "https://downloader.disk.yandex.ru/preview/179c48aa36f59aab9898b1da097be4ad25533a376557aeaa896deec85ac56ac9/6a316ae0/4A0TcDQi1qmRcgIYL6ZUfbzw4gujPvGFKNWtDjk8dV-byL1KvFiQzHwANIJ9QZzH6FpnpCbATivfnu5AT8h74Q%3D%3D?uid=0&filename=AMNYAMOV_FINISH.png&disposition=inline&hash=&limit=0&content_type=image%2Fpng&owner_uid=0&tknv=v3&is_direct_zip_experiment=1&size=1920x953"
 SMALL_ICON_URL = "https://cdn.discordapp.com/attachments/1381981605848944720/1449946500057792543/4.png?ex=6940bf68&is=693f6de8&hm=df622f91cff0f82216929fb398fbc04aea2ab256c4323a18840538c0bbdabb08&"
 
 # Глобальный пул подключений к БД
@@ -1060,13 +1060,9 @@ async def slash_create_application_panel(interaction: discord.Interaction):
         embed.add_field(
             name="❗ Принимаем заявки на две роли: ACADEMY / RP ❗",
             value=(
-                "**На роль ACADEMY** — требуются откаты с MCL/CAPT и GUNGAME.\n"
+                "**На роль ACADEMY** — требуются откаты с GUNGAME.\n"
                 "**На роль RP** — откаты не нужны.\n\n"
-                "⌚ Среднее время рассмотрения — **менее 5 часов** *(зависит от занятости рекрутов и количества заявок)*.\n"
                 "Решение направляется ботом в личные сообщения. Отсутствие ответа в указанный срок означает отказ в заявке.\n\n"
-                "Если у Вас отсутствуют необходимые навыки или откаты — заявка будет отклонена автоматически "
-                "*(искл: открыты заявки без откатов — уведомляется отдельно)*.\n\n"
-                "**Будем рады видеть вас в наших рядах!**"
             ),
             inline=False
         )
@@ -1083,16 +1079,12 @@ async def slash_create_application_panel(interaction: discord.Interaction):
         embed.add_field(
             name="📋 Требования к заявке на ACADEMY",
             value=(
-                "Внимательно прочитайте шаблон заявки при её подаче — там тоже есть информация.\n"
-                "В заявке на ACADEMY требуются полные откаты с **GG** и **МП** (MCL, ВЗЗ, Capt).\n\n"
                 "> <:outputonlinepngtools:1449964820999700721>  Откаты с GG — не более **1 недели** назад.\n"
-                "> <:outputonlinepngtools:1449964820999700721>  Откаты с МП — не более **60 дней** назад.\n"
                 "> <:outputonlinepngtools:1449964820999700721>  Откаты **не должны** быть нарезкой или мувиком.\n"
                 "> <:outputonlinepngtools:1449964820999700721>  Минимальная длина откатов с GG — **от 5 минут**.\n"
                 "> <:outputonlinepngtools:1449964820999700721>  Любое нарушение условий подачи откатов — скорее всего будет причиной отказа без исключений.\n\n"
+                "У нас нет слотов только для компететива, если вы подаёте заявку в семью - вы играете весь контент.\n"
                 "> ⚠️ После подачи заявки следите за **ЛС** или за запросами на общение в Discord.\n"
-                "> На обзвон рекрут позовёт вас **только в Discord AMNYAMOV** — ни в ЛС, ни в другой сервер.\n\n"
-                "Бот направит вам ответ на вашу заявку с указанием рекрута, с которым вам нужно связаться для дальнейшего обзвона."
             ),
             inline=False
         )
