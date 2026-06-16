@@ -1035,35 +1035,57 @@ async def slash_create_application_panel(interaction: discord.Interaction):
             return
         
         embed = discord.Embed(
-            title="**ЗАЯВКА В СЕМЬЮ**",
+            title="<a:wave:1449952532129517570> Путь в семью AMNYAMOV начинается здесь!",
             color=discord.Color.from_rgb(0, 0, 0)
         )
-        
+
         embed.add_field(
-    name="**<a:wave:1449952532129517570> Путь в семью начинается здесь!**\n\u200b",
-    value=(
-        "**<:outputonlinepngtools:1449964820999700721> После заполнения анкеты Вам придет оповещение в ЛС от бота с результатом (ответ не придёт, если закрыт доступ к сообщениям в discord) **\n\n"
-        "**<:outputonlinepngtools:1449964820999700721> Для заявки в \"RP\" используйте кнопку \"Заявка в RP\" **\n"
-        "Примечание:\n"
-        "**<:outputonlinepngtools:1449964820999700721> откаты не обязательны**\n"
-        "**<:outputonlinepngtools:1449964820999700721> подавая заявку в RP, вы никак не сможете играть капты/мкл**\n\n"
-        "**<:outputonlinepngtools:1449964820999700721> Для заявки \"Academy\" используйте кнопку \"Заявка в Academy\" **\n"
-        "Примечание:\n"
-        "**<:outputonlinepngtools:1449964820999700721> откаты с GG должны быть записаны не более 1 недели назад**\n"
-        "**<:outputonlinepngtools:1449964820999700721> минимальная длина откатов с GG — от 5 минут**\n\n"
-        "-# Заявка рассматривается в течении суток. САЙГИ НЕОБЯЗАТЕЛЬНЫ."
-    ),
-    inline=False
-)
-        
+            name="❗ Принимаем заявки на две роли: ACADEMY / RP ❗",
+            value=(
+                "**На роль ACADEMY** — требуются откаты с MCL/CAPT и GUNGAME.\n"
+                "**На роль RP** — откаты не нужны.\n\n"
+                "⌚ Среднее время рассмотрения — **менее 5 часов** *(зависит от занятости рекрутов и количества заявок)*.\n"
+                "Решение направляется ботом в личные сообщения. Отсутствие ответа в указанный срок означает отказ в заявке.\n\n"
+                "Если у Вас отсутствуют необходимые навыки или откаты — заявка будет отклонена автоматически "
+                "*(искл: открыты заявки без откатов — уведомляется отдельно)*.\n\n"
+                "### Будем рады видеть вас в наших рядах!"
+            ),
+            inline=False
+        )
+
+        embed.add_field(
+            name="\u200b",
+            value=(
+                "> ⚠️ Заявки в семью принимаются только на сервер **Orlando**.\n"
+                "> **ВСЕ ЗАЯВКИ МИНИМУМ ОТ 16 ЛЕТ!**"
+            ),
+            inline=False
+        )
+
+        embed.add_field(
+            name="📋 Требования к заявке на ACADEMY",
+            value=(
+                "Внимательно прочитайте шаблон заявки при её подаче — там тоже есть информация.\n"
+                "В заявке на ACADEMY требуются полные откаты с **GG** и **МП** (MCL, ВЗЗ, Capt).\n\n"
+                "> • Откаты с GG — не более **1 недели** назад.\n"
+                "> • Откаты с МП — не более **60 дней** назад.\n"
+                "> • Откаты **не должны** быть нарезкой или мувиком.\n"
+                "> • Минимальная длина откатов с GG — **от 5 минут**.\n"
+                "> • Любое нарушение условий подачи откатов — скорее всего будет причиной отказа без исключений.\n\n"
+                "> ⚠️ После подачи заявки следите за **ЛС** или за запросами на общение в Discord.\n"
+                "> На обзвон рекрут позовёт вас **только в Discord AMNYAMOV** — ни в ЛС, ни в другой сервер.\n\n"
+                "Бот направит вам ответ на вашу заявку с указанием рекрута, с которым вам нужно связаться для дальнейшего обзвона."
+            ),
+            inline=False
+        )
+
         embed.set_image(url=IMAGE_URL)
         embed.set_footer(text="Amnyamov famq", icon_url=SMALL_ICON_URL)
-        
-        # Класс с двумя кнопками
+
         class ApplicationButtonView(discord.ui.View):
             def __init__(self):
                 super().__init__(timeout=None)
-            
+
             @discord.ui.button(
                 label="Заявка в Academy",
                 emoji="<:icons848:1449967782308614244>",
@@ -1073,7 +1095,7 @@ async def slash_create_application_panel(interaction: discord.Interaction):
             )
             async def apply_button_callback(self, interaction: discord.Interaction, button: discord.ui.Button):
                 await interaction.response.send_modal(ApplicationForm())
-            
+
             @discord.ui.button(
                 label="Заявка в RP",
                 emoji="<:AMNYAMOV_FINISH:1382285909449244774>",
@@ -1083,9 +1105,9 @@ async def slash_create_application_panel(interaction: discord.Interaction):
             )
             async def rp_apply_button_callback(self, interaction: discord.Interaction, button: discord.ui.Button):
                 await interaction.response.send_modal(RPApplicationForm())
-        
+
         await interaction.response.send_message(embed=embed, view=ApplicationButtonView())
-        
+
     except Exception as e:
         print(f"Ошибка команды заявка: {e}")
         traceback.print_exc()
