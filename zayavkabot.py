@@ -45,7 +45,7 @@ TAG_ROLE_IDS = [
 SLASH_COMMAND_ROLE_IDS = [1310673963000528949, 1381685630555258931]
 
 # URL изображений для заявки
-IMAGE_URL = "https://downloader.disk.yandex.ru/preview/179c48aa36f59aab9898b1da097be4ad25533a376557aeaa896deec85ac56ac9/6a316ae0/4A0TcDQi1qmRcgIYL6ZUfbzw4gujPvGFKNWtDjk8dV-byL1KvFiQzHwANIJ9QZzH6FpnpCbATivfnu5AT8h74Q%3D%3D?uid=0&filename=AMNYAMOV_FINISH.png&disposition=inline&hash=&limit=0&content_type=image%2Fpng&owner_uid=0&tknv=v3&is_direct_zip_experiment=1&size=1920x953"
+IMAGE_URL = "https://media.discordapp.net/attachments/1189879069991510066/1449528629775302698/zastavki-gas-kvas-com-n1e0-p-zastavki-na-telefon-am-nyam-2.png?ex=694285fc&is=6941347c&hm=560b40c38fbc83ae9821b60df73fadefb0d917eb0082f53635350b686b33b605&=&format=webp&quality=lossless"
 SMALL_ICON_URL = "https://cdn.discordapp.com/attachments/1381981605848944720/1449946500057792543/4.png?ex=6940bf68&is=693f6de8&hm=df622f91cff0f82216929fb398fbc04aea2ab256c4323a18840538c0bbdabb08&"
 
 # Глобальный пул подключений к БД
