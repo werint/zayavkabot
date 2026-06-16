@@ -46,7 +46,7 @@ SLASH_COMMAND_ROLE_IDS = [1310673963000528949, 1381685630555258931]
 
 # URL изображений для заявки
 IMAGE_URL = "https://media.discordapp.net/attachments/1189879069991510066/1449528629775302698/zastavki-gas-kvas-com-n1e0-p-zastavki-na-telefon-am-nyam-2.png?ex=694285fc&is=6941347c&hm=560b40c38fbc83ae9821b60df73fadefb0d917eb0082f53635350b686b33b605&=&format=webp&quality=lossless"
-SMALL_ICON_URL = "https://cdn.discordapp.com/attachments/1381981605848944720/1449946500057792543/4.png?ex=6940bf68&is=693f6de8&hm=df622f91cff0f82216929fb398fbc04aea2ab256c4323a18840538c0bbdabb08&"
+SMALL_ICON_URL = "https://media.discordapp.net/attachments/1516396600195420201/1516404399247855717/AMNYAMOV_FINISH.png?ex=6a328526&is=6a3133a6&hm=27c476656bf849a3d1137b0ec349a381e5754c0d7f7d915352bd583b9b9387e5&=&format=webp&quality=lossless&width=968&height=968"
 
 # Глобальный пул подключений к БД
 db_pool = None
