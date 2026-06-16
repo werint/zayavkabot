@@ -441,15 +441,9 @@ class ApplicationButtons(discord.ui.View):
         # Отправляем уведомление пользователю в ЛС
         try:
             user = await bot.fetch_user(int(application.discord_id))
-
-            channel_link = make_channel_link(application.channel_id) if application.channel_id else None
-            channel_part = f"либо в канал {channel_link}" if channel_link else ""
-
             await user.send(
-                f"✅ **Ваша заявка в Amnyamov одобрена!**\n\n"
-                f"Напишите рекрутеру <@{interaction.user.id}> (`{interaction.user.name}`) в личные сообщения "
-                f"для дальнейших инструкций по обзвону, {channel_part}.\n\n"
-                f"⏰ У вас есть **48 часов** пройти обзвон с момента получения этого сообщения."
+                f"🎉 **Вы приняты в семью!** 🎉\n"
+                f"Добро пожаловать! https://discord.gg/amnyamov"
             )
         except Exception as e:
             print(f"Не удалось отправить сообщение пользователю: {e}")
@@ -504,6 +498,22 @@ class ApplicationButtons(discord.ui.View):
         if not application:
             await interaction.followup.send("❌ Заявка не найдена в базе данных", ephemeral=True)
             return
+
+        # Отправляем уведомление пользователю в ЛС
+        try:
+            user = await bot.fetch_user(int(application.discord_id))
+
+            channel_link = make_channel_link(application.channel_id) if application.channel_id else None
+            app_link = channel_link  # ссылка на канал заявки как "ссылка на заявку"
+            channel_part = f"или в канале {channel_link}" if channel_link else ""
+
+            await user.send(
+                f"📝 Вашу заявку {app_link} взяли на рассмотрение!\n\n"
+                f"Ожидайте дальнейших инструкций от рекрута <@{interaction.user.id}> (`{interaction.user.name}`) "
+                f"в личных сообщениях {channel_part}!"
+            )
+        except Exception as e:
+            print(f"Не удалось отправить сообщение пользователю: {e}")
 
         if application.channel_id:
             channel = interaction.guild.get_channel(int(application.channel_id))
