@@ -1,10 +1,10 @@
 import os
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord import app_commands
 import json
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time as dtime, timezone
 import traceback
 import sys
 import asyncpg
@@ -35,6 +35,15 @@ LOGS_CHANNEL_ID = 1317565432210915379       # Канал для логов
 APPLICATIONS_CATEGORY_ID = 1316900282340347934  # Категория для заявок
 GUILD_ID = 1003525677640851496              # ID основного сервера
 
+# ID канала для ежедневного отчета по рекрутам
+RECRUITER_REPORT_CHANNEL_ID = 1531424805650174133
+
+# ID роли рекрута (для отчета/тега рекрутов)
+RECRUITER_ROLE_ID = 1381685630555258931
+
+# ID ролей, которым разрешена команда /toprec
+TOPREC_ALLOWED_ROLE_IDS = [1310673963000528949, 1223589384452833290]
+
 # ID ролей для тега и административных прав
 TAG_ROLE_IDS = [
     1381685630555258931,
@@ -64,14 +73,26 @@ def has_slash_command_permission(interaction: discord.Interaction):
         print(f"Ошибка проверки прав для slash-команд: {e}")
         return False
 
+def has_toprec_permission(interaction: discord.Interaction):
+    """Проверяет, есть ли у пользователя права на использование /toprec"""
+    try:
+        for role_id in TOPREC_ALLOWED_ROLE_IDS:
+            role = discord.utils.get(interaction.user.roles, id=role_id)
+            if role:
+                return True
+        return False
+    except Exception as e:
+        print(f"Ошибка проверки прав для /toprec: {e}")
+        return False
+
 def make_channel_link(channel_id):
     """Формирует прямую ссылку на канал для использования в ЛС"""
     return f"https://discord.com/channels/{GUILD_ID}/{channel_id}"
 
 class Application:
     def __init__(self, username_static, ooc_info, fam_history, reason, rollbacks, discord_user, discord_id,
-                 message_id=None, status="pending", channel_id=None, moderator=None, reason_reject=None,
-                 created_at=None, updated_at=None, id=None):
+                 message_id=None, status="pending", channel_id=None, moderator=None, moderator_id=None,
+                 reason_reject=None, created_at=None, updated_at=None, id=None):
         self.id = id
         self.username_static = username_static
         self.ooc_info = ooc_info
@@ -84,6 +105,7 @@ class Application:
         self.status = status
         self.channel_id = channel_id
         self.moderator = moderator
+        self.moderator_id = moderator_id
         self.reason_reject = reason_reject
         self.created_at = created_at or datetime.now()
         self.updated_at = updated_at or datetime.now()
@@ -102,6 +124,7 @@ class Application:
             "status": self.status,
             "channel_id": self.channel_id,
             "moderator": self.moderator,
+            "moderator_id": self.moderator_id,
             "reason_reject": self.reason_reject,
             "created_at": self.created_at.isoformat() if isinstance(self.created_at, datetime) else self.created_at,
             "updated_at": self.updated_at.isoformat() if isinstance(self.updated_at, datetime) else self.updated_at
@@ -122,6 +145,7 @@ class Application:
             status=data.get("status", "pending"),
             channel_id=str(data.get("channel_id")) if data.get("channel_id") else None,
             moderator=data.get("moderator"),
+            moderator_id=data.get("moderator_id"),
             reason_reject=data.get("reason_reject"),
             created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.now(),
             updated_at=datetime.fromisoformat(data["updated_at"]) if data.get("updated_at") else datetime.now()
@@ -142,6 +166,16 @@ async def init_database():
             except Exception as e:
                 print(f"❌ Таблица applications не найдена: {e}")
                 raise Exception("Таблица applications должна быть создана заранее")
+
+            # Безопасно добавляем колонку moderator_id, если её ещё нет.
+            # Не трогает существующие данные и структуру таблицы, только расширяет её.
+            try:
+                await conn.execute('''
+                    ALTER TABLE applications ADD COLUMN IF NOT EXISTS moderator_id TEXT
+                ''')
+                print("✅ Колонка moderator_id проверена/добавлена")
+            except Exception as e:
+                print(f"⚠️ Не удалось добавить колонку moderator_id: {e}")
 
     except Exception as e:
         print(f"❌ Ошибка при подключении к базе данных: {e}")
@@ -167,8 +201,9 @@ async def save_application(application):
                         channel_id = $10,
                         moderator = $11,
                         reason_reject = $12,
+                        moderator_id = $13,
                         updated_at = CURRENT_TIMESTAMP
-                    WHERE id = $13
+                    WHERE id = $14
                 ''',
                 application.username_static, application.ooc_info, application.fam_history,
                 application.reason, application.rollbacks, application.discord_user,
@@ -177,13 +212,14 @@ async def save_application(application):
                 application.status,
                 str(application.channel_id) if application.channel_id else None,
                 application.moderator, application.reason_reject,
+                application.moderator_id,
                 application.id)
             else:
                 record = await conn.fetchrow('''
                     INSERT INTO applications
                     (username_static, ooc_info, fam_history, reason, rollbacks, discord_user,
-                     discord_id, message_id, status, channel_id, moderator, reason_reject)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                     discord_id, message_id, status, channel_id, moderator, reason_reject, moderator_id)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                     RETURNING id, created_at, updated_at
                 ''',
                 application.username_static, application.ooc_info, application.fam_history,
@@ -192,7 +228,8 @@ async def save_application(application):
                 str(application.message_id) if application.message_id else None,
                 application.status,
                 str(application.channel_id) if application.channel_id else None,
-                application.moderator, application.reason_reject)
+                application.moderator, application.reason_reject,
+                application.moderator_id)
 
                 if record:
                     application.id = record['id']
@@ -206,6 +243,26 @@ async def save_application(application):
         traceback.print_exc()
         return False
 
+def _application_from_record(record):
+    return Application(
+        id=record['id'],
+        username_static=record['username_static'],
+        ooc_info=record['ooc_info'],
+        fam_history=record['fam_history'],
+        reason=record['reason'],
+        rollbacks=record['rollbacks'],
+        discord_user=record['discord_user'],
+        discord_id=record['discord_id'],
+        message_id=record['message_id'],
+        status=record['status'],
+        channel_id=record['channel_id'],
+        moderator=record['moderator'],
+        moderator_id=record['moderator_id'] if 'moderator_id' in record else None,
+        reason_reject=record['reason_reject'],
+        created_at=record['created_at'],
+        updated_at=record['updated_at']
+    )
+
 async def load_applications():
     """Загружает все заявки из базы данных"""
     try:
@@ -216,24 +273,7 @@ async def load_applications():
             ''')
 
             for record in records:
-                app = Application(
-                    id=record['id'],
-                    username_static=record['username_static'],
-                    ooc_info=record['ooc_info'],
-                    fam_history=record['fam_history'],
-                    reason=record['reason'],
-                    rollbacks=record['rollbacks'],
-                    discord_user=record['discord_user'],
-                    discord_id=record['discord_id'],
-                    message_id=record['message_id'],
-                    status=record['status'],
-                    channel_id=record['channel_id'],
-                    moderator=record['moderator'],
-                    reason_reject=record['reason_reject'],
-                    created_at=record['created_at'],
-                    updated_at=record['updated_at']
-                )
-                applications_list.append(app)
+                applications_list.append(_application_from_record(record))
 
         print(f"✅ Загружено {len(applications_list)} заявок из БД")
         return applications_list
@@ -254,24 +294,7 @@ async def get_user_applications(discord_id):
             ''', discord_id)
 
             for record in records:
-                app = Application(
-                    id=record['id'],
-                    username_static=record['username_static'],
-                    ooc_info=record['ooc_info'],
-                    fam_history=record['fam_history'],
-                    reason=record['reason'],
-                    rollbacks=record['rollbacks'],
-                    discord_user=record['discord_user'],
-                    discord_id=record['discord_id'],
-                    message_id=record['message_id'],
-                    status=record['status'],
-                    channel_id=record['channel_id'],
-                    moderator=record['moderator'],
-                    reason_reject=record['reason_reject'],
-                    created_at=record['created_at'],
-                    updated_at=record['updated_at']
-                )
-                applications_list.append(app)
+                applications_list.append(_application_from_record(record))
 
         return applications_list
     except Exception as e:
@@ -290,24 +313,7 @@ async def get_pending_applications():
             ''')
 
             for record in records:
-                app = Application(
-                    id=record['id'],
-                    username_static=record['username_static'],
-                    ooc_info=record['ooc_info'],
-                    fam_history=record['fam_history'],
-                    reason=record['reason'],
-                    rollbacks=record['rollbacks'],
-                    discord_user=record['discord_user'],
-                    discord_id=record['discord_id'],
-                    message_id=record['message_id'],
-                    status=record['status'],
-                    channel_id=record['channel_id'],
-                    moderator=record['moderator'],
-                    reason_reject=record['reason_reject'],
-                    created_at=record['created_at'],
-                    updated_at=record['updated_at']
-                )
-                applications_list.append(app)
+                applications_list.append(_application_from_record(record))
 
         return applications_list
     except Exception as e:
@@ -323,27 +329,27 @@ async def get_application_by_id(app_id):
             ''', app_id)
 
             if record:
-                app = Application(
-                    id=record['id'],
-                    username_static=record['username_static'],
-                    ooc_info=record['ooc_info'],
-                    fam_history=record['fam_history'],
-                    reason=record['reason'],
-                    rollbacks=record['rollbacks'],
-                    discord_user=record['discord_user'],
-                    discord_id=record['discord_id'],
-                    message_id=record['message_id'],
-                    status=record['status'],
-                    channel_id=record['channel_id'],
-                    moderator=record['moderator'],
-                    reason_reject=record['reason_reject'],
-                    created_at=record['created_at'],
-                    updated_at=record['updated_at']
-                )
-                return app
+                return _application_from_record(record)
         return None
     except Exception as e:
         print(f"❌ Ошибка получения заявки по ID: {e}")
+        return None
+
+async def get_application_by_message_id(message_id):
+    """Получает заявку по ID сообщения с embed'ом.
+    Это позволяет кнопкам работать даже после рестарта бота,
+    так как ID заявки не хранится в самом объекте View после деплоя."""
+    try:
+        async with db_pool.acquire() as conn:
+            record = await conn.fetchrow('''
+                SELECT * FROM applications WHERE message_id = $1
+            ''', str(message_id))
+
+            if record:
+                return _application_from_record(record)
+        return None
+    except Exception as e:
+        print(f"❌ Ошибка получения заявки по message_id: {e}")
         return None
 
 def has_admin_permission(user):
@@ -416,6 +422,18 @@ class ApplicationButtons(discord.ui.View):
         super().__init__(timeout=None)
         self.application_id = application_id
 
+    async def resolve_application(self, interaction: discord.Interaction):
+        """Определяет заявку, к которой относится нажатая кнопка.
+        Сначала пытается найти заявку по ID сообщения (переживает рестарты бота),
+        и только если это не удалось — использует application_id, сохранённый в самом View
+        (актуально для эфемерных View, созданных через /активзаявки)."""
+        application = None
+        if interaction.message:
+            application = await get_application_by_message_id(interaction.message.id)
+        if not application and self.application_id:
+            application = await get_application_by_id(self.application_id)
+        return application
+
     @discord.ui.button(label="✅ Принять", style=discord.ButtonStyle.green, custom_id="approve_app", row=0)
     async def approve_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not has_admin_permission(interaction.user):
@@ -424,7 +442,7 @@ class ApplicationButtons(discord.ui.View):
 
         await interaction.response.defer(ephemeral=True)
 
-        application = await get_application_by_id(self.application_id)
+        application = await self.resolve_application(interaction)
         if not application:
             await interaction.followup.send("❌ Заявка не найдена в базе данных", ephemeral=True)
             return
@@ -435,6 +453,7 @@ class ApplicationButtons(discord.ui.View):
 
         application.status = "approved"
         application.moderator = interaction.user.name
+        application.moderator_id = str(interaction.user.id)
         application.updated_at = datetime.now()
         await save_application(application)
 
@@ -474,7 +493,7 @@ class ApplicationButtons(discord.ui.View):
             await interaction.response.send_message("❌ У вас нет прав для этого действия", ephemeral=True)
             return
 
-        application = await get_application_by_id(self.application_id)
+        application = await self.resolve_application(interaction)
         if not application:
             await interaction.response.send_message("❌ Заявка не найдена в базе данных", ephemeral=True)
             return
@@ -494,7 +513,7 @@ class ApplicationButtons(discord.ui.View):
 
         await interaction.response.defer(ephemeral=True)
 
-        application = await get_application_by_id(self.application_id)
+        application = await self.resolve_application(interaction)
         if not application:
             await interaction.followup.send("❌ Заявка не найдена в базе данных", ephemeral=True)
             return
@@ -543,6 +562,7 @@ class RejectReasonModal(discord.ui.Modal, title="Причина отказа"):
 
         self.application.status = "rejected"
         self.application.moderator = interaction.user.name
+        self.application.moderator_id = str(interaction.user.id)
         self.application.reason_reject = self.reason.value
         self.application.updated_at = datetime.now()
         await save_application(self.application)
@@ -590,7 +610,7 @@ class RejectReasonModal(discord.ui.Modal, title="Причина отказа"):
         except:
             pass
 
-# Класс для выбора заявки в команде /активзаявки
+# Класс для выбора заявки в команде /активзаявки (одна страница, максимум 25 заявок)
 class ApplicationSelect(discord.ui.Select):
     def __init__(self, applications):
         options = []
@@ -648,22 +668,79 @@ class ApplicationSelect(discord.ui.Select):
         embed.add_field(name="Дата подачи", value=application.created_at.strftime("%d.%m.%Y %H:%M"), inline=True)
 
         if application.channel_id:
-            embed.add_field(name="Канал", value=f"<#{application.channel_id}>", inline=True)
+            channel_exists = interaction.guild.get_channel(int(application.channel_id))
+            if channel_exists:
+                embed.add_field(name="Канал", value=f"<#{application.channel_id}>", inline=True)
+            else:
+                embed.add_field(name="Канал", value="Удален (заявку всё равно можно обработать)", inline=True)
         else:
-            embed.add_field(name="Канал", value="Удален", inline=True)
+            embed.add_field(name="Канал", value="Удален (заявку всё равно можно обработать)", inline=True)
 
         view = ApplicationButtons(app_id)
 
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-# View для выбора заявки
-class ApplicationSelectView(discord.ui.View):
-    def __init__(self, applications):
+# View для выбора заявки с постраничной навигацией (обходит лимит Discord в 25 опций у Select)
+class ApplicationListView(discord.ui.View):
+    def __init__(self, applications, page=0):
         super().__init__(timeout=300)
-        self.add_item(ApplicationSelect(applications))
+        self.applications = applications
+        self.per_page = 25
+        self.max_page = max(0, (len(applications) - 1) // self.per_page)
+        self.page = max(0, min(page, self.max_page))
+        self._build_items()
+
+    def _build_items(self):
+        self.clear_items()
+
+        start = self.page * self.per_page
+        end = start + self.per_page
+        page_apps = self.applications[start:end]
+
+        self.add_item(ApplicationSelect(page_apps))
+
+        if self.max_page > 0:
+            prev_button = discord.ui.Button(
+                label="◀ Назад",
+                style=discord.ButtonStyle.gray,
+                disabled=(self.page == 0),
+                row=1
+            )
+            next_button = discord.ui.Button(
+                label="Вперёд ▶",
+                style=discord.ButtonStyle.gray,
+                disabled=(self.page == self.max_page),
+                row=1
+            )
+            page_label = discord.ui.Button(
+                label=f"Стр. {self.page + 1}/{self.max_page + 1}",
+                style=discord.ButtonStyle.gray,
+                disabled=True,
+                row=1
+            )
+
+            async def go_prev(interaction: discord.Interaction):
+                self.page -= 1
+                self._build_items()
+                await interaction.response.edit_message(view=self)
+
+            async def go_next(interaction: discord.Interaction):
+                self.page += 1
+                self._build_items()
+                await interaction.response.edit_message(view=self)
+
+            prev_button.callback = go_prev
+            next_button.callback = go_next
+
+            self.add_item(prev_button)
+            self.add_item(page_label)
+            self.add_item(next_button)
 
 async def send_application_embed(channel, application, interaction_user, guild):
-    """Отправляет заявку в новом формате"""
+    """Отправляет заявку в новом формате.
+    Embed и кнопки отправляются ОДНИМ сообщением — это нужно,
+    чтобы после рестарта бота можно было найти заявку по ID этого сообщения
+    и кнопки продолжали работать."""
     try:
         role_mentions = []
         for role_id in TAG_ROLE_IDS:
@@ -737,10 +814,8 @@ async def send_application_embed(channel, application, interaction_user, guild):
         else:
             embed.add_field(name="Предыдущие заявки", value="Заявок не найдено.", inline=False)
 
-        message = await channel.send(embed=embed)
-
         view = ApplicationButtons(application.id)
-        await channel.send(view=view)
+        message = await channel.send(embed=embed, view=view)
 
         application.message_id = message.id
         await save_application(application)
@@ -1007,6 +1082,135 @@ class RPApplicationForm(discord.ui.Modal, title='Подача RP заявки'):
         except:
             pass
 
+# ============ ОТЧЁТ ПО РЕКРУТАМ ============
+
+async def get_recruiter_report_data(since: datetime):
+    """Собирает статистику из БД за период с момента since до сейчас."""
+    async with db_pool.acquire() as conn:
+        recruiter_rows = await conn.fetch('''
+            SELECT moderator_id, COUNT(*) as cnt
+            FROM applications
+            WHERE status IN ('approved', 'rejected')
+              AND updated_at >= $1
+              AND moderator_id IS NOT NULL
+            GROUP BY moderator_id
+        ''', since)
+
+        totals = await conn.fetchrow('''
+            SELECT
+                COUNT(*) FILTER (WHERE status = 'approved') AS approved_count,
+                COUNT(*) FILTER (WHERE status = 'rejected') AS rejected_count
+            FROM applications
+            WHERE updated_at >= $1 AND status IN ('approved', 'rejected')
+        ''', since)
+
+        submissions = await conn.fetchrow('''
+            SELECT
+                COUNT(*) FILTER (WHERE fam_history IS NULL OR TRIM(fam_history) = '') AS rp_count,
+                COUNT(*) FILTER (WHERE fam_history IS NOT NULL AND TRIM(fam_history) != '') AS academy_count
+            FROM applications
+            WHERE created_at >= $1
+        ''', since)
+
+    recruiter_counts = {row['moderator_id']: row['cnt'] for row in recruiter_rows}
+    return recruiter_counts, totals, submissions
+
+async def build_recruiter_report_embed(guild: discord.Guild, since: datetime, title: str):
+    """Строит embed отчёта. Показывает ВСЕХ рекрутов с ролью RECRUITER_ROLE_ID,
+    включая тех, у кого 0 рассмотренных заявок, отсортированных по убыванию."""
+    recruiter_counts, totals, submissions = await get_recruiter_report_data(since)
+
+    role = guild.get_role(RECRUITER_ROLE_ID) if guild else None
+    recruiters = role.members if role else []
+
+    stats_list = []
+    for member in recruiters:
+        cnt = recruiter_counts.get(str(member.id), 0)
+        stats_list.append((member, cnt))
+
+    stats_list.sort(key=lambda x: x[1], reverse=True)
+
+    embed = discord.Embed(
+        title=title,
+        color=discord.Color.gold(),
+        timestamp=datetime.now()
+    )
+
+    if stats_list:
+        lines = []
+        for i, (member, cnt) in enumerate(stats_list, 1):
+            if i == 1:
+                prefix = "🥇"
+            elif i == 2:
+                prefix = "🥈"
+            elif i == 3:
+                prefix = "🥉"
+            else:
+                prefix = f"{i}."
+            lines.append(f"{prefix} <@{member.id}> — **{cnt}**")
+
+        chunk = ""
+        part = 1
+        field_name = "👮 Рассмотрено заявок рекрутами"
+        for line in lines:
+            if len(chunk) + len(line) + 1 > 1024:
+                name = field_name if part == 1 else f"{field_name} (продолжение)"
+                embed.add_field(name=name, value=chunk, inline=False)
+                chunk = ""
+                part += 1
+            chunk += line + "\n"
+        if chunk:
+            name = field_name if part == 1 else f"{field_name} (продолжение)"
+            embed.add_field(name=name, value=chunk, inline=False)
+    else:
+        embed.add_field(
+            name="👮 Рассмотрено заявок рекрутами",
+            value="Рекруты с ролью не найдены.",
+            inline=False
+        )
+
+    embed.add_field(
+        name="📥 Подано заявок",
+        value=f"📝 Academy: **{submissions['academy_count']}**\n🎭 RP: **{submissions['rp_count']}**",
+        inline=True
+    )
+    embed.add_field(
+        name="📊 Итоги рассмотрения",
+        value=f"✅ Принято: **{totals['approved_count']}**\n❌ Отклонено: **{totals['rejected_count']}**",
+        inline=True
+    )
+
+    embed.set_footer(text="Период: последние 24 часа")
+
+    return embed
+
+# Задача: ежедневный отчёт в 00:00 по МСК (МСК = UTC+3, без перехода на летнее время)
+# 00:00 МСК = 21:00 UTC предыдущего дня
+@tasks.loop(time=dtime(hour=21, minute=0, tzinfo=timezone.utc))
+async def daily_recruiter_report():
+    try:
+        guild = bot.get_guild(GUILD_ID)
+        if not guild:
+            print("❌ Основной сервер не найден для ежедневного отчёта")
+            return
+
+        channel = guild.get_channel(RECRUITER_REPORT_CHANNEL_ID) or bot.get_channel(RECRUITER_REPORT_CHANNEL_ID)
+        if not channel:
+            print("❌ Канал для ежедневного отчёта не найден")
+            return
+
+        since = datetime.now() - timedelta(hours=24)
+        embed = await build_recruiter_report_embed(guild, since, "📊 Ежедневный отчёт по рекрутам")
+        await channel.send(embed=embed)
+        print("✅ Ежедневный отчёт по рекрутам отправлен")
+    except Exception as e:
+        print(f"❌ Ошибка отправки ежедневного отчёта: {e}")
+        traceback.print_exc()
+
+@daily_recruiter_report.before_loop
+async def before_daily_recruiter_report():
+    await bot.wait_until_ready()
+
 @bot.event
 async def on_ready():
     print(f'✅ {bot.user} запущен!')
@@ -1021,6 +1225,10 @@ async def on_ready():
         print(f"❌ Ошибка синхронизации slash-команд: {e}")
 
     bot.add_view(ApplicationButtons(0))
+
+    if not daily_recruiter_report.is_running():
+        daily_recruiter_report.start()
+        print("✅ Задача ежедневного отчёта по рекрутам запущена")
 
     for guild in bot.guilds:
         print(f'Сервер: {guild.name} (ID: {guild.id})')
@@ -1202,11 +1410,11 @@ async def slash_active_applications(interaction: discord.Interaction):
             apps_list += f"• #{app.id} {app_type} **{app.username_static}** - {created} ({channel_status})\n"
 
         if len(pending_apps) > 10:
-            apps_list += f"\n*... и еще {len(pending_apps) - 10} заявок*"
+            apps_list += f"\n*... и еще {len(pending_apps) - 10} заявок (доступны на следующих страницах списка ниже)*"
 
         embed.add_field(name="Доступные заявки", value=apps_list, inline=False)
 
-        view = ApplicationSelectView(pending_apps)
+        view = ApplicationListView(pending_apps)
 
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
@@ -1214,6 +1422,32 @@ async def slash_active_applications(interaction: discord.Interaction):
         print(f"Ошибка команды активзаявки: {e}")
         traceback.print_exc()
         await interaction.response.send_message("❌ Произошла ошибка при получении списка заявок.", ephemeral=True)
+
+@bot.tree.command(
+    name="toprec",
+    description="Статистика рекрутов за последние 24 часа"
+)
+async def slash_toprec(interaction: discord.Interaction):
+    try:
+        if not has_toprec_permission(interaction):
+            await interaction.response.send_message(
+                "❌ У вас нет прав для выполнения этой команды.",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.defer()
+
+        since = datetime.now() - timedelta(hours=24)
+        embed = await build_recruiter_report_embed(interaction.guild, since, "📊 Топ рекрутов за 24 часа")
+        await interaction.followup.send(embed=embed)
+    except Exception as e:
+        print(f"Ошибка команды toprec: {e}")
+        traceback.print_exc()
+        try:
+            await interaction.followup.send("❌ Произошла ошибка при получении статистики.", ephemeral=True)
+        except:
+            pass
 
 @bot.tree.command(
     name="очистка",
