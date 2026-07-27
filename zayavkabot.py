@@ -1111,8 +1111,7 @@ async def slash_create_application_panel(interaction: discord.Interaction):
                 emoji="<:AMNYAMOV_FINISH:1382285909449244774>",
                 style=discord.ButtonStyle.gray,
                 custom_id="rp_apply_button_amnyamov",
-                row=0,
-                disabled=True
+                row=0
             )
             async def rp_apply_button_callback(self, interaction: discord.Interaction, button: discord.ui.Button):
                 await interaction.response.send_modal(RPApplicationForm())
