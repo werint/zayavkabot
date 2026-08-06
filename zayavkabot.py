@@ -35,7 +35,7 @@ LOGS_CHANNEL_ID = 1317565432210915379       # Канал для логов
 APPLICATIONS_CATEGORY_ID = 1316900282340347934  # Категория для заявок
 GUILD_ID = 1003525677640851496              # ID основного сервера
 
-# ID канала для ежедневного отчета по рекрутам
+# ID канала для ежедневного/еженедельного отчета по рекрутам
 RECRUITER_REPORT_CHANNEL_ID = 1531424805650174133
 
 # ID роли рекрута (для отчета/тега рекрутов)
@@ -921,11 +921,11 @@ class ApplicationForm(discord.ui.Modal, title='Подача заявки в се
     )
 
     rollbacks = discord.ui.TextInput(
-        label='Откаты с ГГ (ссылки)',
+        label='Откаты с ГГ (Обязательно)',
         placeholder='Например: https://youtu.be/ спешик',
         style=discord.TextStyle.paragraph,
         max_length=2000,
-        required=False
+        required=True
     )
 
     async def on_submit(self, interaction: discord.Interaction):
@@ -965,7 +965,6 @@ class ApplicationForm(discord.ui.Modal, title='Подача заявки в се
             channel_link = make_channel_link(application.channel_id)
             await interaction.followup.send(
                 f"✅ Ваша заявка в Amnyamov успешно отправлена!\n\n"
-                f"Срок рассмотрения заявки от 3 до 5 рабочих дней.\n"
                 f"Решение появится в этом чате — {channel_link}",
                 ephemeral=True
             )
@@ -1055,7 +1054,6 @@ class RPApplicationForm(discord.ui.Modal, title='Подача RP заявки'):
             channel_link = make_channel_link(application.channel_id)
             await interaction.followup.send(
                 f"✅ Ваша заявка в Amnyamov успешно отправлена!\n\n"
-                f"Срок рассмотрения заявки от 3 до 5 рабочих дней.\n"
                 f"Решение появится в этом чате — {channel_link}",
                 ephemeral=True
             )
@@ -1085,10 +1083,14 @@ class RPApplicationForm(discord.ui.Modal, title='Подача RP заявки'):
 # ============ ОТЧЁТ ПО РЕКРУТАМ ============
 
 async def get_recruiter_report_data(since: datetime):
-    """Собирает статистику из БД за период с момента since до сейчас."""
+    """Собирает статистику из БД за период с момента since до сейчас.
+    Для каждого модератора отдельно считает принятые и отклонённые заявки."""
     async with db_pool.acquire() as conn:
         recruiter_rows = await conn.fetch('''
-            SELECT moderator_id, COUNT(*) as cnt
+            SELECT
+                moderator_id,
+                COUNT(*) FILTER (WHERE status = 'approved') AS approved_cnt,
+                COUNT(*) FILTER (WHERE status = 'rejected') AS rejected_cnt
             FROM applications
             WHERE status IN ('approved', 'rejected')
               AND updated_at >= $1
@@ -1112,12 +1114,19 @@ async def get_recruiter_report_data(since: datetime):
             WHERE created_at >= $1
         ''', since)
 
-    recruiter_counts = {row['moderator_id']: row['cnt'] for row in recruiter_rows}
+    recruiter_counts = {
+        row['moderator_id']: {
+            'approved': row['approved_cnt'],
+            'rejected': row['rejected_cnt']
+        }
+        for row in recruiter_rows
+    }
     return recruiter_counts, totals, submissions
 
-async def build_recruiter_report_embed(guild: discord.Guild, since: datetime, title: str):
+async def build_recruiter_report_embed(guild: discord.Guild, since: datetime, title: str, footer_text: str = "Период: последние 24 часа"):
     """Строит embed отчёта. Показывает ВСЕХ рекрутов с ролью RECRUITER_ROLE_ID,
-    включая тех, у кого 0 рассмотренных заявок, отсортированных по убыванию."""
+    включая тех, у кого 0 рассмотренных заявок. Для каждого рекрута показывает
+    отдельно принятые и отклонённые заявки, сортировка по общему числу рассмотренных (по убыванию)."""
     recruiter_counts, totals, submissions = await get_recruiter_report_data(since)
 
     role = guild.get_role(RECRUITER_ROLE_ID) if guild else None
@@ -1125,10 +1134,13 @@ async def build_recruiter_report_embed(guild: discord.Guild, since: datetime, ti
 
     stats_list = []
     for member in recruiters:
-        cnt = recruiter_counts.get(str(member.id), 0)
-        stats_list.append((member, cnt))
+        counts = recruiter_counts.get(str(member.id), {'approved': 0, 'rejected': 0})
+        approved = counts['approved']
+        rejected = counts['rejected']
+        total = approved + rejected
+        stats_list.append((member, approved, rejected, total))
 
-    stats_list.sort(key=lambda x: x[1], reverse=True)
+    stats_list.sort(key=lambda x: x[3], reverse=True)
 
     embed = discord.Embed(
         title=title,
@@ -1138,7 +1150,7 @@ async def build_recruiter_report_embed(guild: discord.Guild, since: datetime, ti
 
     if stats_list:
         lines = []
-        for i, (member, cnt) in enumerate(stats_list, 1):
+        for i, (member, approved, rejected, total) in enumerate(stats_list, 1):
             if i == 1:
                 prefix = "🥇"
             elif i == 2:
@@ -1147,7 +1159,7 @@ async def build_recruiter_report_embed(guild: discord.Guild, since: datetime, ti
                 prefix = "🥉"
             else:
                 prefix = f"{i}."
-            lines.append(f"{prefix} <@{member.id}> — **{cnt}**")
+            lines.append(f"{prefix} <@{member.id}> — **{total}** (✅ {approved} | ❌ {rejected})")
 
         chunk = ""
         part = 1
@@ -1180,7 +1192,7 @@ async def build_recruiter_report_embed(guild: discord.Guild, since: datetime, ti
         inline=True
     )
 
-    embed.set_footer(text="Период: последние 24 часа")
+    embed.set_footer(text=footer_text)
 
     return embed
 
@@ -1200,7 +1212,9 @@ async def daily_recruiter_report():
             return
 
         since = datetime.now() - timedelta(hours=24)
-        embed = await build_recruiter_report_embed(guild, since, "📊 Ежедневный отчёт по рекрутам")
+        embed = await build_recruiter_report_embed(
+            guild, since, "📊 Ежедневный отчёт по рекрутам", "Период: последние 24 часа"
+        )
         await channel.send(embed=embed)
         print("✅ Ежедневный отчёт по рекрутам отправлен")
     except Exception as e:
@@ -1209,6 +1223,40 @@ async def daily_recruiter_report():
 
 @daily_recruiter_report.before_loop
 async def before_daily_recruiter_report():
+    await bot.wait_until_ready()
+
+# Задача: еженедельный отчёт, отправляется в тот же канал, что и ежедневный.
+# Срабатывает каждый день в 00:05 МСК (21:05 UTC), но реально шлёт отчёт
+# только когда наступил понедельник по МСК — так получается раз в неделю.
+@tasks.loop(time=dtime(hour=21, minute=5, tzinfo=timezone.utc))
+async def weekly_recruiter_report():
+    try:
+        moscow_now = datetime.utcnow() + timedelta(hours=3)
+        if moscow_now.weekday() != 0:  # 0 = понедельник
+            return
+
+        guild = bot.get_guild(GUILD_ID)
+        if not guild:
+            print("❌ Основной сервер не найден для еженедельного отчёта")
+            return
+
+        channel = guild.get_channel(RECRUITER_REPORT_CHANNEL_ID) or bot.get_channel(RECRUITER_REPORT_CHANNEL_ID)
+        if not channel:
+            print("❌ Канал для еженедельного отчёта не найден")
+            return
+
+        since = datetime.now() - timedelta(days=7)
+        embed = await build_recruiter_report_embed(
+            guild, since, "📈 Еженедельный отчёт по рекрутам", "Период: последние 7 дней"
+        )
+        await channel.send(embed=embed)
+        print("✅ Еженедельный отчёт по рекрутам отправлен")
+    except Exception as e:
+        print(f"❌ Ошибка отправки еженедельного отчёта: {e}")
+        traceback.print_exc()
+
+@weekly_recruiter_report.before_loop
+async def before_weekly_recruiter_report():
     await bot.wait_until_ready()
 
 @bot.event
@@ -1229,6 +1277,10 @@ async def on_ready():
     if not daily_recruiter_report.is_running():
         daily_recruiter_report.start()
         print("✅ Задача ежедневного отчёта по рекрутам запущена")
+
+    if not weekly_recruiter_report.is_running():
+        weekly_recruiter_report.start()
+        print("✅ Задача еженедельного отчёта по рекрутам запущена")
 
     for guild in bot.guilds:
         print(f'Сервер: {guild.name} (ID: {guild.id})')
@@ -1439,7 +1491,9 @@ async def slash_toprec(interaction: discord.Interaction):
         await interaction.response.defer()
 
         since = datetime.now() - timedelta(hours=24)
-        embed = await build_recruiter_report_embed(interaction.guild, since, "📊 Топ рекрутов за 24 часа")
+        embed = await build_recruiter_report_embed(
+            interaction.guild, since, "📊 Топ рекрутов за 24 часа", "Период: последние 24 часа"
+        )
         await interaction.followup.send(embed=embed)
     except Exception as e:
         print(f"Ошибка команды toprec: {e}")
