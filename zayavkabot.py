@@ -50,6 +50,10 @@ TAG_ROLE_IDS = [
     1381683377090068550
 ]
 
+# ID роли, которая одна видит Academy-заявки (канал + пинг).
+# RP-заявки по-прежнему видят обе роли из TAG_ROLE_IDS.
+ACADEMY_ONLY_ROLE_ID = 1381683377090068550
+
 # ID ролей для использования slash-команд (только эти две роли)
 SLASH_COMMAND_ROLE_IDS = [1310673963000528949, 1381685630555258931]
 
@@ -364,9 +368,27 @@ def has_admin_permission(user):
         print(f"Ошибка проверки прав: {e}")
         return False
 
-async def create_application_channel(guild, discord_user, discord_id, application):
-    """Создает канал для заявки в указанной категории"""
+def has_academy_permission(user):
+    """Проверяет, есть ли у пользователя роль, которой разрешено обрабатывать Academy-заявки"""
     try:
+        role = discord.utils.get(user.roles, id=ACADEMY_ONLY_ROLE_ID)
+        return role is not None
+    except Exception as e:
+        print(f"Ошибка проверки прав на Academy: {e}")
+        return False
+
+def is_academy_application(application):
+    """Определяет, является ли заявка Academy-заявкой (в отличие от RP)"""
+    return bool(application.fam_history and application.fam_history.strip())
+
+async def create_application_channel(guild, discord_user, discord_id, application, staff_role_ids=None):
+    """Создает канал для заявки в указанной категории.
+    staff_role_ids — список ID ролей, которым дать доступ к каналу.
+    Если не передан, используются обе роли из TAG_ROLE_IDS (поведение по умолчанию для RP)."""
+    try:
+        if staff_role_ids is None:
+            staff_role_ids = TAG_ROLE_IDS
+
         clean_name = re.sub(r'[^\w\s-]', '', discord_user)
         clean_name = re.sub(r'[-\s]+', '-', clean_name).strip().lower()
 
@@ -381,7 +403,7 @@ async def create_application_channel(guild, discord_user, discord_id, applicatio
             guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True)
         }
 
-        for role_id in TAG_ROLE_IDS:
+        for role_id in staff_role_ids:
             role = guild.get_role(role_id)
             if role:
                 overwrites[role] = discord.PermissionOverwrite(
@@ -451,6 +473,13 @@ class ApplicationButtons(discord.ui.View):
             await interaction.followup.send(f"❌ Эта заявка уже {application.status}", ephemeral=True)
             return
 
+        if is_academy_application(application) and not has_academy_permission(interaction.user):
+            await interaction.followup.send(
+                f"❌ Academy-заявки может обрабатывать только роль <@&{ACADEMY_ONLY_ROLE_ID}>",
+                ephemeral=True
+            )
+            return
+
         application.status = "approved"
         application.moderator = interaction.user.name
         application.moderator_id = str(interaction.user.id)
@@ -500,6 +529,13 @@ class ApplicationButtons(discord.ui.View):
 
         if application.status != "pending":
             await interaction.response.send_message(f"❌ Эта заявка уже {application.status}", ephemeral=True)
+            return
+
+        if is_academy_application(application) and not has_academy_permission(interaction.user):
+            await interaction.response.send_message(
+                f"❌ Academy-заявки может обрабатывать только роль <@&{ACADEMY_ONLY_ROLE_ID}>",
+                ephemeral=True
+            )
             return
 
         modal = RejectReasonModal(application, self, interaction.message)
@@ -736,14 +772,20 @@ class ApplicationListView(discord.ui.View):
             self.add_item(page_label)
             self.add_item(next_button)
 
-async def send_application_embed(channel, application, interaction_user, guild):
+async def send_application_embed(channel, application, interaction_user, guild, staff_role_ids=None):
     """Отправляет заявку в новом формате.
     Embed и кнопки отправляются ОДНИМ сообщением — это нужно,
     чтобы после рестарта бота можно было найти заявку по ID этого сообщения
-    и кнопки продолжали работать."""
+    и кнопки продолжали работать.
+    staff_role_ids — какие роли пинговать при новой заявке (если не передано — обе роли, как для RP)."""
     try:
+        if staff_role_ids is None:
+            staff_role_ids = TAG_ROLE_IDS
+
+        is_academy = bool(application.fam_history and application.fam_history.strip())
+
         role_mentions = []
-        for role_id in TAG_ROLE_IDS:
+        for role_id in staff_role_ids:
             role = guild.get_role(role_id)
             if role:
                 role_mentions.append(f"<@&{role.id}>")
@@ -754,8 +796,9 @@ async def send_application_embed(channel, application, interaction_user, guild):
         else:
             await channel.send("Новая заявка!")
 
+        title_prefix = "AC" if is_academy else "RP"
         embed = discord.Embed(
-            title=f"Заявление #{application.id}",
+            title=f"{title_prefix}-{application.username_static}",
             color=discord.Color.blue(),
             timestamp=application.created_at
         )
@@ -955,12 +998,17 @@ class ApplicationForm(discord.ui.Modal, title='Подача заявки в се
 
             await save_application(application)
 
+            # Academy-заявку видит только роль ACADEMY_ONLY_ROLE_ID
             channel = await create_application_channel(
-                interaction.guild, interaction.user.name, interaction.user.id, application
+                interaction.guild, interaction.user.name, interaction.user.id, application,
+                staff_role_ids=[ACADEMY_ONLY_ROLE_ID]
             )
             application.channel_id = channel.id
 
-            message, _ = await send_application_embed(channel, application, interaction.user, interaction.guild)
+            message, _ = await send_application_embed(
+                channel, application, interaction.user, interaction.guild,
+                staff_role_ids=[ACADEMY_ONLY_ROLE_ID]
+            )
 
             channel_link = make_channel_link(application.channel_id)
             await interaction.followup.send(
@@ -1384,50 +1432,6 @@ async def slash_create_application_panel(interaction: discord.Interaction):
         await interaction.response.send_message("❌ Произошла ошибка при создании панели.", ephemeral=True)
 
 @bot.tree.command(
-    name="заявки",
-    description="Показать все заявки"
-)
-async def slash_applications_list(interaction: discord.Interaction):
-    try:
-        if not has_slash_command_permission(interaction):
-            await interaction.response.send_message(
-                "❌ У вас нет прав для выполнения этой команды.\n"
-                "Требуется одна из ролей: <@&1310673963000528949> или <@&1381685630555258931>",
-                ephemeral=True
-            )
-            return
-
-        pending_apps = await get_pending_applications()
-        all_apps = await load_applications()
-
-        approved_apps = [app for app in all_apps if app.status == "approved"]
-        rejected_apps = [app for app in all_apps if app.status == "rejected"]
-
-        embed = discord.Embed(
-            title="📋 Активные заявки",
-            color=discord.Color.blue(),
-            timestamp=datetime.now()
-        )
-
-        embed.add_field(name="⏳ На рассмотрении", value=str(len(pending_apps)), inline=True)
-        embed.add_field(name="✅ Принято", value=str(len(approved_apps)), inline=True)
-        embed.add_field(name="❌ Отклонено", value=str(len(rejected_apps)), inline=True)
-
-        if pending_apps:
-            apps_text = ""
-            for app in pending_apps[:5]:
-                channel_info = f"<#{app.channel_id}>" if app.channel_id else "Канал удален"
-                app_type = "🎭 RP" if not app.fam_history or not app.fam_history.strip() else "📝 Обычная"
-                apps_text += f"• #{app.id} {app_type} **{app.username_static}** - {channel_info}\n"
-            embed.add_field(name="Последние заявки:", value=apps_text, inline=False)
-
-        await interaction.response.send_message(embed=embed)
-    except Exception as e:
-        print(f"Ошибка команды заявки: {e}")
-        traceback.print_exc()
-        await interaction.response.send_message("❌ Произошла ошибка при получении списка заявок.", ephemeral=True)
-
-@bot.tree.command(
     name="активзаявки",
     description="Выбрать активную заявку для обработки"
 )
@@ -1503,156 +1507,8 @@ async def slash_toprec(interaction: discord.Interaction):
         except:
             pass
 
-@bot.tree.command(
-    name="очистка",
-    description="Очистка старых каналов с заявками"
-)
-async def slash_cleanup_channels(interaction: discord.Interaction):
-    try:
-        if not has_slash_command_permission(interaction):
-            await interaction.response.send_message(
-                "❌ У вас нет прав для выполнения этой команды.\n"
-                "Требуется одна из ролей: <@&1310673963000528949> или <@&1381685630555258931>",
-                ephemeral=True
-            )
-            return
-
-        await interaction.response.defer()
-
-        category = interaction.guild.get_channel(APPLICATIONS_CATEGORY_ID)
-
-        if not category:
-            await interaction.followup.send("Категория заявок не найдена.")
-            return
-
-        deleted = 0
-        for channel in category.channels:
-            if hasattr(channel, 'created_at'):
-                age = datetime.now() - channel.created_at.replace(tzinfo=None)
-                if age.days > 30:
-                    try:
-                        await channel.delete(reason="Очистка старых заявок")
-                        deleted += 1
-                    except:
-                        pass
-
-        await interaction.followup.send(f"✅ Удалено {deleted} старых каналов с заявками.")
-    except Exception as e:
-        print(f"Ошибка команды очистка: {e}")
-        traceback.print_exc()
-        await interaction.followup.send("❌ Произошла ошибка при очистке каналов.")
-
-@bot.tree.command(
-    name="статус",
-    description="Проверить статус заявки пользователя"
-)
-@app_commands.describe(
-    пользователь="Пользователь для проверки (оставьте пустым для себя)"
-)
-async def slash_application_status(interaction: discord.Interaction, пользователь: discord.User = None):
-    try:
-        if not has_slash_command_permission(interaction):
-            await interaction.response.send_message(
-                "❌ У вас нет прав для выполнения этой команды.\n"
-                "Требуется одна из ролей: <@&1310673963000528949> или <@&1381685630555258931>",
-                ephemeral=True
-            )
-            return
-
-        if пользователь is None:
-            discord_id = str(interaction.user.id)
-            user_mention = f"<@{discord_id}>"
-        else:
-            discord_id = str(пользователь.id)
-            user_mention = f"<@{discord_id}>"
-
-        user_apps = await get_user_applications(discord_id)
-
-        if not user_apps:
-            await interaction.response.send_message("Заявок не найдено.")
-            return
-
-        embed = discord.Embed(
-            title=f"Заявки пользователя {user_mention}",
-            color=discord.Color.blue(),
-            timestamp=datetime.now()
-        )
-
-        for i, app in enumerate(user_apps[:3], 1):
-            status_emoji = "⏳" if app.status == "pending" else "✅" if app.status == "approved" else "❌"
-            status_text = "На рассмотрении" if app.status == "pending" else "Принята" if app.status == "approved" else "Отклонена"
-
-            app_type = "🎭 RP заявка" if not app.fam_history or not app.fam_history.strip() else "📝 Обычная заявка"
-
-            app_info = f"**Статус:** {status_emoji} {status_text}\n"
-            app_info += f"**Тип:** {app_type}\n"
-            app_info += f"**Никнейм и статик:** {app.username_static}\n"
-
-            if app.channel_id:
-                app_info += f"**Канал:** <#{app.channel_id}>\n"
-
-            if app.status == "rejected" and app.reason_reject:
-                app_info += f"**Причина отказа:** {app.reason_reject[:100]}...\n"
-
-            if app.status == "approved" and app.moderator:
-                app_info += f"**Принял:** {app.moderator}\n"
-
-            app_info += f"**Дата:** {app.created_at.strftime('%d.%m.%Y %H:%M')}"
-
-            embed.add_field(name=f"Заявка #{app.id}", value=app_info, inline=False)
-
-        await interaction.response.send_message(embed=embed)
-    except Exception as e:
-        print(f"Ошибка команды статус: {e}")
-        traceback.print_exc()
-        await interaction.response.send_message("❌ Произошла ошибка при проверке статуса.", ephemeral=True)
-
-@bot.tree.command(
-    name="тест",
-    description="Тестовая команда для проверки работы бота"
-)
-async def slash_test_command(interaction: discord.Interaction):
-    try:
-        if not has_slash_command_permission(interaction):
-            await interaction.response.send_message(
-                "❌ У вас нет прав для выполнения этой команды.\n"
-                "Требуется одна из ролей: <@&1310673963000528949> или <@&1381685630555258931>",
-                ephemeral=True
-            )
-            return
-
-        await interaction.response.send_message(f"✅ Бот работает! Пинг: {round(bot.latency * 1000)}мс")
-    except Exception as e:
-        print(f"Ошибка команды тест: {e}")
-        traceback.print_exc()
-        await interaction.response.send_message("❌ Произошла ошибка при выполнении команды.", ephemeral=True)
-
 # ============ КОМАНДЫ С ПРЕФИКСОМ ! ============
-
-@bot.command(name="заявко")
-@commands.has_any_role(*SLASH_COMMAND_ROLE_IDS)
-async def legacy_create_application_panel(ctx):
-    await ctx.send("⚠️ Эта команда устарела. Пожалуйста, используйте slash-команду `/заявко`")
-
-@bot.command(name="заявки")
-@commands.has_any_role(*SLASH_COMMAND_ROLE_IDS)
-async def legacy_applications_list(ctx):
-    await ctx.send("⚠️ Эта команда устарела. Пожалуйста, используйте slash-команду `/заявки`")
-
-@bot.command(name="очистка")
-@commands.has_any_role(*SLASH_COMMAND_ROLE_IDS)
-async def legacy_cleanup_channels(ctx):
-    await ctx.send("⚠️ Эта команда устарела. Пожалуйста, используйте slash-команду `/очистка`")
-
-@bot.command(name="статус")
-@commands.has_any_role(*SLASH_COMMAND_ROLE_IDS)
-async def legacy_application_status(ctx, discord_id: str = None):
-    await ctx.send("⚠️ Эта команда устарела. Пожалуйста, используйте slash-команду `/статус`")
-
-@bot.command(name="тест")
-@commands.has_any_role(*SLASH_COMMAND_ROLE_IDS)
-async def legacy_test_command(ctx):
-    await ctx.send("⚠️ Эта команда устарела. Пожалуйста, используйте slash-команду `/тест`")
+# (все legacy-команды с префиксом ! удалены — используйте slash-команды)
 
 @bot.event
 async def on_command_error(ctx, error):
