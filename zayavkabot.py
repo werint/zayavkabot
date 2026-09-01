@@ -965,7 +965,7 @@ class ApplicationForm(discord.ui.Modal, title='Подача заявки в се
 
     rollbacks = discord.ui.TextInput(
         label='Откаты с ГГ (Обязательно)',
-        placeholder='Например: https://youtu.be/ спешик',
+        placeholder='Например: https://youtu.be/ спешик + сайга',
         style=discord.TextStyle.paragraph,
         max_length=2000,
         required=True
