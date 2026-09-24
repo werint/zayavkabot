@@ -10,13 +10,11 @@ import sys
 import asyncpg
 import asyncio
 
-# Получаем данные из переменных окружения Railway
 TOKEN = os.environ.get('DISCORD_TOKEN')
 if not TOKEN:
     print("❌ ОШИБКА: Переменная окружения DISCORD_TOKEN не установлена!")
     sys.exit(1)
 
-# Данные для PostgreSQL (Railway предоставляет DATABASE_URL)
 DATABASE_URL = os.environ.get('DATABASE_URL')
 if not DATABASE_URL:
     print("❌ ОШИБКА: Переменная окружения DATABASE_URL не установлена!")
@@ -30,43 +28,31 @@ intents.members = True
 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# ID каналов для основного сервера
-LOGS_CHANNEL_ID = 1317565432210915379       # Канал для логов
-APPLICATIONS_CATEGORY_ID = 1316900282340347934  # Категория для заявок
-GUILD_ID = 1003525677640851496              # ID основного сервера
+LOGS_CHANNEL_ID = 1317565432210915379
+APPLICATIONS_CATEGORY_ID = 1316900282340347934
+GUILD_ID = 1003525677640851496
 
-# ID канала для ежедневного/еженедельного отчета по рекрутам
 RECRUITER_REPORT_CHANNEL_ID = 1531424805650174133
 
-# ID роли рекрута (для отчета/тега рекрутов)
 RECRUITER_ROLE_ID = 1381685630555258931
 
-# ID ролей, которым разрешена команда /toprec
 TOPREC_ALLOWED_ROLE_IDS = [1310673963000528949, 1223589384452833290]
 
-# ID ролей для тега и административных прав
 TAG_ROLE_IDS = [
     1381685630555258931,
     1381683377090068550
 ]
 
-# ID роли, которая одна видит Academy-заявки (канал + пинг).
-# RP-заявки по-прежнему видят обе роли из TAG_ROLE_IDS.
 ACADEMY_ONLY_ROLE_ID = 1381683377090068550
 
-# ID ролей для использования slash-команд (только эти две роли)
 SLASH_COMMAND_ROLE_IDS = [1310673963000528949, 1381685630555258931]
 
-# URL изображений для заявки
 IMAGE_URL = "https://media.discordapp.net/attachments/1189879069991510066/1449528629775302698/zastavki-gas-kvas-com-n1e0-p-zastavki-na-telefon-am-nyam-2.png?ex=694285fc&is=6941347c&hm=560b40c38fbc83ae9821b60df73fadefb0d917eb0082f53635350b686b33b605&=&format=webp&quality=lossless"
 SMALL_ICON_URL = "https://media.discordapp.net/attachments/1516396600195420201/1516404399247855717/AMNYAMOV_FINISH.png?ex=6a328526&is=6a3133a6&hm=27c476656bf849a3d1137b0ec349a381e5754c0d7f7d915352bd583b9b9387e5&=&format=webp&quality=lossless&width=968&height=968"
 
-# Глобальный пул подключений к БД
 db_pool = None
 
-# Функция проверки прав для slash-команд
 def has_slash_command_permission(interaction: discord.Interaction):
-    """Проверяет, есть ли у пользователя права на использование slash-команд"""
     try:
         for role_id in SLASH_COMMAND_ROLE_IDS:
             role = discord.utils.get(interaction.user.roles, id=role_id)
@@ -78,7 +64,6 @@ def has_slash_command_permission(interaction: discord.Interaction):
         return False
 
 def has_toprec_permission(interaction: discord.Interaction):
-    """Проверяет, есть ли у пользователя права на использование /toprec"""
     try:
         for role_id in TOPREC_ALLOWED_ROLE_IDS:
             role = discord.utils.get(interaction.user.roles, id=role_id)
@@ -90,7 +75,6 @@ def has_toprec_permission(interaction: discord.Interaction):
         return False
 
 def make_channel_link(channel_id):
-    """Формирует прямую ссылку на канал для использования в ЛС"""
     return f"https://discord.com/channels/{GUILD_ID}/{channel_id}"
 
 class Application:
@@ -157,7 +141,6 @@ class Application:
         return app
 
 async def init_database():
-    """Подключение к существующей базе данных (без создания таблиц)"""
     global db_pool
     try:
         db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=10)
@@ -171,8 +154,6 @@ async def init_database():
                 print(f"❌ Таблица applications не найдена: {e}")
                 raise Exception("Таблица applications должна быть создана заранее")
 
-            # Безопасно добавляем колонку moderator_id, если её ещё нет.
-            # Не трогает существующие данные и структуру таблицы, только расширяет её.
             try:
                 await conn.execute('''
                     ALTER TABLE applications ADD COLUMN IF NOT EXISTS moderator_id TEXT
@@ -187,7 +168,6 @@ async def init_database():
         raise
 
 async def save_application(application):
-    """Сохраняет заявку в базу данных"""
     try:
         async with db_pool.acquire() as conn:
             if application.id:
@@ -268,7 +248,6 @@ def _application_from_record(record):
     )
 
 async def load_applications():
-    """Загружает все заявки из базы данных"""
     try:
         applications_list = []
         async with db_pool.acquire() as conn:
@@ -287,7 +266,6 @@ async def load_applications():
         return []
 
 async def get_user_applications(discord_id):
-    """Получает заявки пользователя по discord_id"""
     try:
         applications_list = []
         async with db_pool.acquire() as conn:
@@ -306,7 +284,6 @@ async def get_user_applications(discord_id):
         return []
 
 async def get_pending_applications():
-    """Получает все заявки со статусом pending"""
     try:
         applications_list = []
         async with db_pool.acquire() as conn:
@@ -325,7 +302,6 @@ async def get_pending_applications():
         return []
 
 async def get_application_by_id(app_id):
-    """Получает заявку по ID"""
     try:
         async with db_pool.acquire() as conn:
             record = await conn.fetchrow('''
@@ -340,9 +316,6 @@ async def get_application_by_id(app_id):
         return None
 
 async def get_application_by_message_id(message_id):
-    """Получает заявку по ID сообщения с embed'ом.
-    Это позволяет кнопкам работать даже после рестарта бота,
-    так как ID заявки не хранится в самом объекте View после деплоя."""
     try:
         async with db_pool.acquire() as conn:
             record = await conn.fetchrow('''
@@ -357,7 +330,6 @@ async def get_application_by_message_id(message_id):
         return None
 
 def has_admin_permission(user):
-    """Проверяет, есть ли у пользователя одна из админских ролей"""
     try:
         for role_id in TAG_ROLE_IDS:
             role = discord.utils.get(user.roles, id=role_id)
@@ -369,22 +341,20 @@ def has_admin_permission(user):
         return False
 
 def has_academy_permission(user):
-    """Проверяет, есть ли у пользователя роль, которой разрешено обрабатывать Academy-заявки"""
     try:
-        role = discord.utils.get(user.roles, id=ACADEMY_ONLY_ROLE_ID)
-        return role is not None
+        for role_id in TAG_ROLE_IDS:
+            role = discord.utils.get(user.roles, id=role_id)
+            if role:
+                return True
+        return False
     except Exception as e:
         print(f"Ошибка проверки прав на Academy: {e}")
         return False
 
 def is_academy_application(application):
-    """Определяет, является ли заявка Academy-заявкой (в отличие от RP)"""
     return bool(application.fam_history and application.fam_history.strip())
 
 async def create_application_channel(guild, discord_user, discord_id, application, staff_role_ids=None):
-    """Создает канал для заявки в указанной категории.
-    staff_role_ids — список ID ролей, которым дать доступ к каналу.
-    Если не передан, используются обе роли из TAG_ROLE_IDS (поведение по умолчанию для RP)."""
     try:
         if staff_role_ids is None:
             staff_role_ids = TAG_ROLE_IDS
@@ -431,24 +401,18 @@ async def create_application_channel(guild, discord_user, discord_id, applicatio
         raise
 
 async def delete_application_channel(channel, delay_seconds=5):
-    """Удаляет канал заявки с задержкой"""
     await asyncio.sleep(delay_seconds)
     try:
         await channel.delete(reason="Заявка обработана")
     except Exception as e:
         print(f"Ошибка при удалении канала: {e}")
 
-# Класс для постоянных кнопок в канале заявки
 class ApplicationButtons(discord.ui.View):
     def __init__(self, application_id):
         super().__init__(timeout=None)
         self.application_id = application_id
 
     async def resolve_application(self, interaction: discord.Interaction):
-        """Определяет заявку, к которой относится нажатая кнопка.
-        Сначала пытается найти заявку по ID сообщения (переживает рестарты бота),
-        и только если это не удалось — использует application_id, сохранённый в самом View
-        (актуально для эфемерных View, созданных через /активзаявки)."""
         application = None
         if interaction.message:
             application = await get_application_by_message_id(interaction.message.id)
@@ -486,7 +450,6 @@ class ApplicationButtons(discord.ui.View):
         application.updated_at = datetime.now()
         await save_application(application)
 
-        # Отправляем уведомление пользователю в ЛС
         try:
             user = await bot.fetch_user(int(application.discord_id))
             await user.send(
@@ -496,10 +459,8 @@ class ApplicationButtons(discord.ui.View):
         except Exception as e:
             print(f"Не удалось отправить сообщение пользователю: {e}")
 
-        # Отправляем лог
         await send_log_to_channel(application, interaction.user, "approved", guild=interaction.guild)
 
-        # Отключаем кнопки
         try:
             for child in self.children:
                 child.disabled = True
@@ -509,7 +470,6 @@ class ApplicationButtons(discord.ui.View):
 
         await interaction.followup.send("✅ Заявка принята!", ephemeral=True)
 
-        # Сообщение в канал и удаление
         if application.channel_id:
             channel = interaction.guild.get_channel(int(application.channel_id))
             if channel:
@@ -554,12 +514,11 @@ class ApplicationButtons(discord.ui.View):
             await interaction.followup.send("❌ Заявка не найдена в базе данных", ephemeral=True)
             return
 
-        # Отправляем уведомление пользователю в ЛС
         try:
             user = await bot.fetch_user(int(application.discord_id))
 
             channel_link = make_channel_link(application.channel_id) if application.channel_id else None
-            app_link = channel_link  # ссылка на канал заявки как "ссылка на заявку"
+            app_link = channel_link
             channel_part = f"или в канале {channel_link}" if channel_link else ""
 
             await user.send(
@@ -577,7 +536,6 @@ class ApplicationButtons(discord.ui.View):
 
         await interaction.followup.send(f"✅ Вы взяли заявку #{application.id} на рассмотрение", ephemeral=True)
 
-# Модальное окно для причины отказа
 class RejectReasonModal(discord.ui.Modal, title="Причина отказа"):
     def __init__(self, application, view, message):
         super().__init__()
@@ -603,7 +561,6 @@ class RejectReasonModal(discord.ui.Modal, title="Причина отказа"):
         self.application.updated_at = datetime.now()
         await save_application(self.application)
 
-        # Отправляем уведомление пользователю в ЛС
         try:
             user = await bot.fetch_user(int(self.application.discord_id))
             await user.send(
@@ -615,10 +572,8 @@ class RejectReasonModal(discord.ui.Modal, title="Причина отказа"):
         except Exception as e:
             print(f"Не удалось отправить сообщение пользователю: {e}")
 
-        # Отправляем лог
         await send_log_to_channel(self.application, interaction.user, "rejected", self.reason.value, guild=interaction.guild)
 
-        # Отключаем кнопки
         try:
             for child in self.view.children:
                 child.disabled = True
@@ -628,7 +583,6 @@ class RejectReasonModal(discord.ui.Modal, title="Причина отказа"):
 
         await interaction.followup.send("✅ Заявка отклонена!", ephemeral=True)
 
-        # Сообщение в канал и удаление
         if self.application.channel_id:
             channel = interaction.guild.get_channel(int(self.application.channel_id))
             if channel:
@@ -646,7 +600,6 @@ class RejectReasonModal(discord.ui.Modal, title="Причина отказа"):
         except:
             pass
 
-# Класс для выбора заявки в команде /активзаявки (одна страница, максимум 25 заявок)
 class ApplicationSelect(discord.ui.Select):
     def __init__(self, applications):
         options = []
@@ -716,7 +669,6 @@ class ApplicationSelect(discord.ui.Select):
 
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-# View для выбора заявки с постраничной навигацией (обходит лимит Discord в 25 опций у Select)
 class ApplicationListView(discord.ui.View):
     def __init__(self, applications, page=0):
         super().__init__(timeout=300)
@@ -773,11 +725,6 @@ class ApplicationListView(discord.ui.View):
             self.add_item(next_button)
 
 async def send_application_embed(channel, application, interaction_user, guild, staff_role_ids=None):
-    """Отправляет заявку в новом формате.
-    Embed и кнопки отправляются ОДНИМ сообщением — это нужно,
-    чтобы после рестарта бота можно было найти заявку по ID этого сообщения
-    и кнопки продолжали работать.
-    staff_role_ids — какие роли пинговать при новой заявке (если не передано — обе роли, как для RP)."""
     try:
         if staff_role_ids is None:
             staff_role_ids = TAG_ROLE_IDS
@@ -869,7 +816,6 @@ async def send_application_embed(channel, application, interaction_user, guild, 
         raise
 
 async def send_log_to_channel(application, moderator, action, reason=None, guild=None):
-    """Отправляет лог о заявке в канал логов"""
     try:
         logs_channel = bot.get_channel(LOGS_CHANNEL_ID)
 
@@ -931,8 +877,6 @@ async def send_log_to_channel(application, moderator, action, reason=None, guild
         print(f"Ошибка отправки лога: {e}")
 
 class ApplicationForm(discord.ui.Modal, title='Подача заявки в семью'):
-    """Модальная форма для подачи заявки"""
-
     nickname_static = discord.ui.TextInput(
         label='Никнейм и Статик Средний онлайн за день',
         placeholder='Например: Skeet Nyam 2253 6+ часов',
@@ -998,16 +942,15 @@ class ApplicationForm(discord.ui.Modal, title='Подача заявки в се
 
             await save_application(application)
 
-            # Academy-заявку видит только роль ACADEMY_ONLY_ROLE_ID
             channel = await create_application_channel(
                 interaction.guild, interaction.user.name, interaction.user.id, application,
-                staff_role_ids=[ACADEMY_ONLY_ROLE_ID]
+                staff_role_ids=TAG_ROLE_IDS
             )
             application.channel_id = channel.id
 
             message, _ = await send_application_embed(
                 channel, application, interaction.user, interaction.guild,
-                staff_role_ids=[ACADEMY_ONLY_ROLE_ID]
+                staff_role_ids=TAG_ROLE_IDS
             )
 
             channel_link = make_channel_link(application.channel_id)
@@ -1040,8 +983,6 @@ class ApplicationForm(discord.ui.Modal, title='Подача заявки в се
             pass
 
 class RPApplicationForm(discord.ui.Modal, title='Подача RP заявки'):
-    """Упрощенная форма для RP заявки (без истории семей и откатов)"""
-
     nickname_static = discord.ui.TextInput(
         label='Никнейм, Статик, Средний онлайн',
         placeholder='Например: Skeet Nyam, 2253, 6ч',
@@ -1128,11 +1069,7 @@ class RPApplicationForm(discord.ui.Modal, title='Подача RP заявки'):
         except:
             pass
 
-# ============ ОТЧЁТ ПО РЕКРУТАМ ============
-
 async def get_recruiter_report_data(since: datetime):
-    """Собирает статистику из БД за период с момента since до сейчас.
-    Для каждого модератора отдельно считает принятые и отклонённые заявки."""
     async with db_pool.acquire() as conn:
         recruiter_rows = await conn.fetch('''
             SELECT
@@ -1172,9 +1109,6 @@ async def get_recruiter_report_data(since: datetime):
     return recruiter_counts, totals, submissions
 
 async def build_recruiter_report_embed(guild: discord.Guild, since: datetime, title: str, footer_text: str = "Период: последние 24 часа"):
-    """Строит embed отчёта. Показывает ВСЕХ рекрутов с ролью RECRUITER_ROLE_ID,
-    включая тех, у кого 0 рассмотренных заявок. Для каждого рекрута показывает
-    отдельно принятые и отклонённые заявки, сортировка по общему числу рассмотренных (по убыванию)."""
     recruiter_counts, totals, submissions = await get_recruiter_report_data(since)
 
     role = guild.get_role(RECRUITER_ROLE_ID) if guild else None
@@ -1244,8 +1178,6 @@ async def build_recruiter_report_embed(guild: discord.Guild, since: datetime, ti
 
     return embed
 
-# Задача: ежедневный отчёт в 00:00 по МСК (МСК = UTC+3, без перехода на летнее время)
-# 00:00 МСК = 21:00 UTC предыдущего дня
 @tasks.loop(time=dtime(hour=21, minute=0, tzinfo=timezone.utc))
 async def daily_recruiter_report():
     try:
@@ -1273,14 +1205,11 @@ async def daily_recruiter_report():
 async def before_daily_recruiter_report():
     await bot.wait_until_ready()
 
-# Задача: еженедельный отчёт, отправляется в тот же канал, что и ежедневный.
-# Срабатывает каждый день в 00:05 МСК (21:05 UTC), но реально шлёт отчёт
-# только когда наступил понедельник по МСК — так получается раз в неделю.
 @tasks.loop(time=dtime(hour=21, minute=5, tzinfo=timezone.utc))
 async def weekly_recruiter_report():
     try:
         moscow_now = datetime.utcnow() + timedelta(hours=3)
-        if moscow_now.weekday() != 0:  # 0 = понедельник
+        if moscow_now.weekday() != 0:
             return
 
         guild = bot.get_guild(GUILD_ID)
@@ -1343,8 +1272,6 @@ async def on_ready():
 async def on_error(event, *args, **kwargs):
     print(f'Ошибка в событии {event}:')
     traceback.print_exc()
-
-# ============ SLASH COMMANDS ============
 
 @bot.tree.command(
     name="заявко",
@@ -1409,7 +1336,8 @@ async def slash_create_application_panel(interaction: discord.Interaction):
                 emoji="<:icons848:1449967782308614244>",
                 style=discord.ButtonStyle.gray,
                 custom_id="apply_button_amnyamov",
-                row=0
+                row=0,
+                disabled=True
             )
             async def apply_button_callback(self, interaction: discord.Interaction, button: discord.ui.Button):
                 await interaction.response.send_modal(ApplicationForm())
@@ -1507,9 +1435,6 @@ async def slash_toprec(interaction: discord.Interaction):
         except:
             pass
 
-# ============ КОМАНДЫ С ПРЕФИКСОМ ! ============
-# (все legacy-команды с префиксом ! удалены — используйте slash-команды)
-
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandNotFound):
@@ -1527,7 +1452,6 @@ async def on_command_error(ctx, error):
 async def on_disconnect():
     print("Бот отключился. Пытаюсь переподключиться...")
 
-# Запуск бота
 if __name__ == "__main__":
     print("=" * 50)
     print("Запуск Discord бота для системы заявок")
